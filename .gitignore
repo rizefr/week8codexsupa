@@ -6,3 +6,6 @@ screenshots/
 .env.local
 *.log
 tsconfig.tsbuildinfo
+
+# Local Netlify folder
+.netlify
