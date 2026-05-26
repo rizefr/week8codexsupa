@@ -2,13 +2,17 @@ import { AppData, BodyWeightLog, ProgramSettings, WorkoutLog } from "../types";
 import {
   consumeCloudAuthRedirect,
   deleteCloudWorkoutLog,
+  getQueuedCloudDeleteIds,
+  getCloudStatus,
   loadCloudData,
+  queueCloudSnapshot,
+  queueCloudWorkoutDelete,
   saveCloudBodyWeightLog,
   saveCloudSettings,
   saveCloudSnapshot,
   saveCloudWorkoutLog,
 } from "./cloud";
-import { todayISO } from "./date";
+import { getCycleInfo, todayISO } from "./date";
 
 const DB_NAME = "chad-aesthetic-dashboard";
 const DB_VERSION = 1;
@@ -16,10 +20,54 @@ const SETTINGS_KEY = "program-settings";
 const FALLBACK_KEY = "chad-aesthetic-dashboard:fallback";
 
 const defaultSettings: ProgramSettings = {
-  startDate: todayISO(),
+  startDate: "",
+  status: "active",
 };
 
 type StoreName = "settings" | "workoutLogs" | "bodyWeights";
+
+export type SaveResult = {
+  localSaved: boolean;
+  cloudSaved: boolean;
+  queued: boolean;
+  offline: boolean;
+  signedIn: boolean;
+  error?: string;
+};
+
+function resultFromCloudSuccess(): SaveResult {
+  const status = getCloudStatus();
+  return {
+    localSaved: true,
+    cloudSaved: status.signedIn,
+    queued: false,
+    offline: !status.online,
+    signedIn: status.signedIn,
+  };
+}
+
+function resultFromCloudSkip(): SaveResult {
+  const status = getCloudStatus();
+  return {
+    localSaved: true,
+    cloudSaved: false,
+    queued: status.signedIn && !status.online,
+    offline: !status.online,
+    signedIn: status.signedIn,
+  };
+}
+
+function resultFromCloudFailure(error: unknown): SaveResult {
+  const status = getCloudStatus();
+  return {
+    localSaved: true,
+    cloudSaved: false,
+    queued: status.signedIn,
+    offline: !status.online,
+    signedIn: status.signedIn,
+    error: error instanceof Error ? error.message : "Cloud sync failed. Local data was saved.",
+  };
+}
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -97,19 +145,51 @@ function saveFallback(data: AppData): void {
 
 function mergeLogsById<T extends { id: string }>(local: T[], remote: T[]): T[] {
   const merged = new Map<string, T>();
-  [...remote, ...local].forEach((item) => merged.set(item.id, item));
+  [...remote, ...local].forEach((item) => {
+    const current = merged.get(item.id);
+    if (!current) {
+      merged.set(item.id, item);
+      return;
+    }
+    const currentTime = Date.parse((current as { updatedAt?: string }).updatedAt ?? "");
+    const nextTime = Date.parse((item as { updatedAt?: string }).updatedAt ?? "");
+    if (!Number.isFinite(currentTime) || (Number.isFinite(nextTime) && nextTime >= currentTime)) {
+      merged.set(item.id, item);
+    }
+  });
   return Array.from(merged.values());
+}
+
+function normalizeProgramFields(data: AppData): AppData {
+  const startDate = data.settings.startDate || [...data.workoutLogs].sort((a, b) => a.date.localeCompare(b.date))[0]?.date || todayISO();
+  return {
+    ...data,
+    workoutLogs: data.workoutLogs.map((log) => {
+      const cycleInfo = getCycleInfo(startDate, log.date);
+      return { ...log, week: cycleInfo.programWeek, cycle: cycleInfo.cycle, weekInCycle: cycleInfo.weekInCycle };
+    }),
+  };
 }
 
 async function saveLocalSnapshot(data: AppData): Promise<void> {
   saveFallback(data);
   if (!("indexedDB" in window)) return;
-  const db = await openDb();
-  await Promise.all([
-    put(db, "settings", { key: SETTINGS_KEY, value: data.settings }),
-    ...data.workoutLogs.map((log) => put(db, "workoutLogs", log)),
-    ...data.bodyWeights.map((log) => put(db, "bodyWeights", log)),
-  ]);
+  try {
+    const db = await openDb();
+    const tx = db.transaction(["settings", "workoutLogs", "bodyWeights"], "readwrite");
+    tx.objectStore("settings").clear();
+    tx.objectStore("workoutLogs").clear();
+    tx.objectStore("bodyWeights").clear();
+    tx.objectStore("settings").put({ key: SETTINGS_KEY, value: data.settings });
+    data.workoutLogs.forEach((log) => tx.objectStore("workoutLogs").put(log));
+    data.bodyWeights.forEach((log) => tx.objectStore("bodyWeights").put(log));
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (error) {
+    console.error("IndexedDB save failed. localStorage fallback is still available.", error);
+  }
 }
 
 async function loadLocalData(): Promise<AppData> {
@@ -136,58 +216,136 @@ async function loadLocalData(): Promise<AppData> {
 
 export async function loadAppData(): Promise<AppData> {
   consumeCloudAuthRedirect();
-  const localData = await loadLocalData();
+  const localData = normalizeProgramFields(await loadLocalData());
   const cloudResult = await loadCloudData();
   if (!cloudResult) return localData;
+  const deletedIds = new Set(getQueuedCloudDeleteIds());
+  const cloudSettings = cloudResult.data.settings;
+  const settings = cloudResult.hasSettings && (cloudSettings.startDate || !localData.settings.startDate)
+    ? cloudSettings
+    : localData.settings;
   const merged = {
-    settings: cloudResult.hasSettings ? cloudResult.data.settings : localData.settings,
-    workoutLogs: mergeLogsById(localData.workoutLogs, cloudResult.data.workoutLogs).sort((a, b) => b.date.localeCompare(a.date)),
+    settings,
+    workoutLogs: mergeLogsById(localData.workoutLogs, cloudResult.data.workoutLogs)
+      .filter((log) => !deletedIds.has(log.id))
+      .sort((a, b) => b.date.localeCompare(a.date)),
     bodyWeights: mergeLogsById(localData.bodyWeights, cloudResult.data.bodyWeights).sort((a, b) => a.date.localeCompare(b.date)),
   };
-  await saveLocalSnapshot(merged);
-  await saveCloudSnapshot(merged).catch(() => undefined);
-  return merged;
+  const normalized = normalizeProgramFields(merged);
+  await saveLocalSnapshot(normalized);
+  await saveCloudSnapshot(normalized).catch(() => undefined);
+  return normalized;
 }
 
-export async function saveSettings(settings: ProgramSettings, snapshot: AppData): Promise<void> {
+export async function saveSettings(settings: ProgramSettings, snapshot: AppData): Promise<SaveResult> {
   const next = { ...snapshot, settings };
   saveFallback(next);
   if ("indexedDB" in window) {
-    const db = await openDb();
-    await put(db, "settings", { key: SETTINGS_KEY, value: settings });
+    try {
+      const db = await openDb();
+      await put(db, "settings", { key: SETTINGS_KEY, value: settings });
+    } catch (error) {
+      console.error("IndexedDB settings save failed. localStorage fallback was saved.", error);
+    }
   }
-  await saveCloudSettings(settings);
+  if (!getCloudStatus().signedIn) {
+    return resultFromCloudSkip();
+  }
+  try {
+    await saveCloudSettings(settings);
+    return resultFromCloudSuccess();
+  } catch (error) {
+    queueCloudSnapshot(next, error);
+    return resultFromCloudFailure(error);
+  }
 }
 
-export async function saveWorkoutLog(log: WorkoutLog, snapshot: AppData): Promise<void> {
+export async function saveWorkoutLog(log: WorkoutLog, snapshot: AppData): Promise<SaveResult> {
   const nextLogs = [log, ...snapshot.workoutLogs.filter((item) => item.id !== log.id)];
-  saveFallback({ ...snapshot, workoutLogs: nextLogs });
+  const next = { ...snapshot, workoutLogs: nextLogs };
+  saveFallback(next);
   if ("indexedDB" in window) {
-    const db = await openDb();
-    await put(db, "workoutLogs", log);
+    try {
+      const db = await openDb();
+      await put(db, "workoutLogs", log);
+    } catch (error) {
+      console.error("IndexedDB workout save failed. localStorage fallback was saved.", error);
+    }
   }
-  await saveCloudWorkoutLog(log);
+  if (!getCloudStatus().signedIn) {
+    return resultFromCloudSkip();
+  }
+  try {
+    await saveCloudWorkoutLog(log);
+    return resultFromCloudSuccess();
+  } catch (error) {
+    queueCloudSnapshot(next, error);
+    return resultFromCloudFailure(error);
+  }
 }
 
-export async function saveBodyWeightLog(log: BodyWeightLog, snapshot: AppData): Promise<void> {
+export async function saveBodyWeightLog(log: BodyWeightLog, snapshot: AppData): Promise<SaveResult> {
   const nextWeights = [log, ...snapshot.bodyWeights.filter((item) => item.id !== log.id)].sort((a, b) =>
     a.date.localeCompare(b.date),
   );
-  saveFallback({ ...snapshot, bodyWeights: nextWeights });
+  const next = { ...snapshot, bodyWeights: nextWeights };
+  saveFallback(next);
   if ("indexedDB" in window) {
-    const db = await openDb();
-    await put(db, "bodyWeights", log);
+    try {
+      const db = await openDb();
+      await put(db, "bodyWeights", log);
+    } catch (error) {
+      console.error("IndexedDB body weight save failed. localStorage fallback was saved.", error);
+    }
   }
-  await saveCloudBodyWeightLog(log);
+  if (!getCloudStatus().signedIn) {
+    return resultFromCloudSkip();
+  }
+  try {
+    await saveCloudBodyWeightLog(log);
+    return resultFromCloudSuccess();
+  } catch (error) {
+    queueCloudSnapshot(next, error);
+    return resultFromCloudFailure(error);
+  }
 }
 
-export async function deleteWorkoutLog(id: string, snapshot: AppData): Promise<void> {
-  saveFallback({ ...snapshot, workoutLogs: snapshot.workoutLogs.filter((item) => item.id !== id) });
+export async function deleteWorkoutLog(id: string, snapshot: AppData): Promise<SaveResult> {
+  const next = { ...snapshot, workoutLogs: snapshot.workoutLogs.filter((item) => item.id !== id) };
+  saveFallback(next);
   if ("indexedDB" in window) {
-    const db = await openDb();
-    await deleteValue(db, "workoutLogs", id);
+    try {
+      const db = await openDb();
+      await deleteValue(db, "workoutLogs", id);
+    } catch (error) {
+      console.error("IndexedDB workout delete failed. localStorage fallback was saved.", error);
+    }
   }
-  await deleteCloudWorkoutLog(id);
+  if (!getCloudStatus().signedIn) {
+    return resultFromCloudSkip();
+  }
+  try {
+    await deleteCloudWorkoutLog(id);
+    return resultFromCloudSuccess();
+  } catch (error) {
+    queueCloudWorkoutDelete(id, error);
+    queueCloudSnapshot(next, error);
+    return resultFromCloudFailure(error);
+  }
+}
+
+export async function saveAppData(data: AppData): Promise<SaveResult> {
+  await saveLocalSnapshot(data);
+  if (!getCloudStatus().signedIn) {
+    return resultFromCloudSkip();
+  }
+  try {
+    await saveCloudSnapshot(data);
+    return resultFromCloudSuccess();
+  } catch (error) {
+    queueCloudSnapshot(data, error);
+    return resultFromCloudFailure(error);
+  }
 }
 
 export { defaultSettings };

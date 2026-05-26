@@ -214,9 +214,15 @@ input[type="checkbox"] {
   gap: 0.45rem;
   color: var(--muted);
   font-size: 0.86rem;
+  border: 0;
+  background: transparent;
+  padding: 0.4rem 0;
+  text-align: left;
 }
 
-.save-state svg.saved,
+.save-state svg.cloud,
+.save-state svg.local,
+.save-state svg.notSignedIn,
 .save-state svg.idle {
   color: var(--green);
   fill: currentColor;
@@ -227,9 +233,14 @@ input[type="checkbox"] {
   fill: currentColor;
 }
 
-.save-state svg.error {
+.save-state svg.syncIssue,
+.save-state svg.offline {
   color: var(--red);
   fill: currentColor;
+}
+
+.mobile-sync {
+  display: none;
 }
 
 .main {
@@ -705,13 +716,13 @@ tr:last-child td {
 
 .set-row {
   display: grid;
-  grid-template-columns: 52px minmax(80px, 1fr) minmax(74px, 0.7fr) minmax(74px, 0.7fr) minmax(64px, 0.55fr) 54px;
+  grid-template-columns: 52px minmax(80px, 1fr) minmax(74px, 0.7fr) minmax(74px, 0.7fr) minmax(64px, 0.55fr) 58px;
   gap: 0.45rem;
   align-items: center;
 }
 
-.set-row:has(input:nth-child(6)) {
-  grid-template-columns: 52px minmax(80px, 1fr) minmax(74px, 0.7fr) minmax(68px, 0.55fr) minmax(68px, 0.55fr) minmax(64px, 0.55fr) 54px;
+.set-row:has(.set-cell:nth-child(7)) {
+  grid-template-columns: 52px minmax(80px, 1fr) minmax(74px, 0.7fr) minmax(68px, 0.55fr) minmax(68px, 0.55fr) minmax(64px, 0.55fr) 58px;
 }
 
 .set-row.header {
@@ -723,6 +734,48 @@ tr:last-child td {
 
 .set-row input {
   min-width: 0;
+}
+
+.set-cell {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted-strong);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.set-cell > strong {
+  color: var(--text);
+  font-size: 0.95rem;
+  text-transform: none;
+}
+
+.set-cell > input {
+  text-transform: none;
+  font-weight: 500;
+}
+
+.done-cell {
+  justify-items: center;
+}
+
+.previous-box {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.previous-box span {
+  color: var(--muted-strong);
+}
+
+.mini-action {
+  width: fit-content;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  padding: 0.5rem 0.65rem;
+  cursor: pointer;
 }
 
 .field-label {
@@ -750,6 +803,51 @@ tr:last-child td {
 .settings-grid {
   grid-template-columns: minmax(220px, 340px) auto;
   justify-content: start;
+}
+
+.settings-actions,
+.cloud-buttons,
+.history-filters,
+.sync-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  margin-top: 0.85rem;
+}
+
+.history-filters {
+  margin-bottom: 1rem;
+}
+
+.history-filters select {
+  max-width: 230px;
+}
+
+.sync-facts span {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--muted-strong);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.cloud-note {
+  color: var(--muted);
+  margin-bottom: 0.8rem;
+}
+
+.import-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.import-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .cloud-auth-form {
@@ -909,6 +1007,21 @@ tr:last-child td {
     backdrop-filter: blur(18px);
   }
 
+  .mobile-sync {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 4.3rem;
+    z-index: 21;
+    display: flex;
+    justify-content: center;
+    min-height: 38px;
+    border: 1px solid var(--line);
+    background: rgba(7, 11, 18, 0.92);
+    border-radius: 8px;
+    backdrop-filter: blur(18px);
+  }
+
   .bottom-nav button {
     border: 0;
     background: transparent;
@@ -1024,7 +1137,7 @@ tr:last-child td {
   }
 
   .set-row,
-  .set-row:has(input:nth-child(6)) {
+  .set-row:has(.set-cell:nth-child(7)) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -1037,7 +1150,19 @@ tr:last-child td {
   }
 
   .set-row strong::before {
+    content: "";
+  }
+
+  .set-number strong::before {
     content: "Set ";
+  }
+
+  .history-filters select,
+  .settings-actions .secondary-action,
+  .cloud-buttons .primary-action,
+  .cloud-buttons .secondary-action {
+    max-width: none;
+    width: 100%;
   }
 
   .weekly-bars {

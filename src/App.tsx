@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -22,7 +22,7 @@ import {
   Weight,
 } from "./components/icons";
 import { progressionSections, ruleSections, tableSections, weeklySchedule, workoutDays } from "./data/routine";
-import { getCloudStatus, sendMagicLink, signOutCloud } from "./lib/cloud";
+import { getCloudStatus, sendMagicLink, signOutCloud, syncCloudNow } from "./lib/cloud";
 import {
   AppData,
   BodyWeightLog,
@@ -32,16 +32,19 @@ import {
   SetLog,
   WorkoutLog,
 } from "./types";
-import { addDays, dayKeyForDate, formatDate, getProgramWeek, todayISO } from "./lib/date";
+import { addDays, dayKeyForDate, formatDate, getCycleInfo, todayISO } from "./lib/date";
 import {
   allExercises,
   bodyWeightChange,
   completedExerciseCount,
   completedProgramWorkouts,
   completedSetCount,
+  completedWorkoutsInCurrentCycle,
   completedWorkoutsThisWeek,
   compareLastTwoExerciseSessions,
   createId,
+  cycleWorkoutTarget,
+  effectiveProgramStartDate,
   exerciseNameForId,
   exerciseSessions,
   exerciseVolume,
@@ -51,11 +54,13 @@ import {
   latestBodyWeight,
   numericValue,
   plannedTrainingDaysElapsedThisWeek,
+  prefillWorkoutLogFromHistory,
   previousExercisePerformance,
+  previousSetSummary,
   progressionAdvice,
+  refreshProgramFields,
   repsForSet,
   sevenDayAverage,
-  totalProgramWorkouts,
   weeklySummaries,
   workoutVolume,
 } from "./lib/progress";
@@ -64,11 +69,14 @@ import {
   deleteWorkoutLog,
   loadAppData,
   saveBodyWeightLog,
+  saveAppData,
   saveSettings,
   saveWorkoutLog,
+  SaveResult,
 } from "./lib/storage";
 
 type Page = "dashboard" | "today" | "routine" | "logger" | "progress" | "weight" | "history" | "settings";
+type SaveState = "idle" | "saving" | "cloud" | "local" | "offline" | "syncIssue" | "notSignedIn";
 
 interface Route {
   page: Page;
@@ -174,12 +182,58 @@ function StatCard({
   );
 }
 
+function syncLabel(saveState: SaveState, loading: boolean, cloudStatus: ReturnType<typeof getCloudStatus>): string {
+  if (loading) return "Loading";
+  if (saveState === "saving") return "Saving...";
+  if (saveState === "cloud") return "Saved to cloud";
+  if (saveState === "offline") return "Offline, saved locally";
+  if (saveState === "syncIssue" || cloudStatus.pendingSync) return "Sync issue: tap to retry";
+  if (saveState === "notSignedIn" || !cloudStatus.signedIn) return "Not signed in to cloud sync";
+  if (saveState === "local") return "Saved locally";
+  return cloudStatus.signedIn ? "Saved to cloud" : "Saved locally";
+}
+
+function SyncStatus({
+  saveState,
+  loading,
+  cloudStatus,
+  saveError,
+  onRetry,
+  mobile = false,
+}: {
+  saveState: SaveState;
+  loading: boolean;
+  cloudStatus: ReturnType<typeof getCloudStatus>;
+  saveError: string;
+  onRetry: () => void;
+  mobile?: boolean;
+}) {
+  const isActionable = saveState === "syncIssue" || cloudStatus.pendingSync;
+  return (
+    <button
+      className={classNames("save-state", mobile && "mobile-sync", saveState)}
+      onClick={isActionable ? onRetry : undefined}
+      title={saveError || cloudStatus.lastError || undefined}
+      type="button"
+    >
+      <Circle size={9} className={saveState} />
+      {syncLabel(saveState, loading, cloudStatus)}
+    </button>
+  );
+}
+
 function App() {
   const [route, setRoute] = useState<Route>(parseRoute);
   const [data, setData] = useState<AppData>({ settings: defaultSettings, workoutLogs: [], bodyWeights: [] });
   const [loading, setLoading] = useState(true);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [saveError, setSaveError] = useState("");
   const [cloudStatus, setCloudStatus] = useState(getCloudStatus());
+  const dataRef = useRef(data);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute());
@@ -196,76 +250,160 @@ function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    const updateOnlineStatus = () => {
+      const status = getCloudStatus();
+      setCloudStatus(status);
+      if (status.online && status.signedIn && status.pendingSync) {
+        setSaveState("saving");
+        syncCloudNow(dataRef.current)
+          .then(() => {
+            setCloudStatus(getCloudStatus());
+            setSaveState("cloud");
+          })
+          .catch((error) => {
+            console.error("Automatic sync after reconnect failed.", error);
+            setSaveError(error instanceof Error ? error.message : "Automatic sync failed.");
+            setCloudStatus(getCloudStatus());
+            setSaveState("syncIssue");
+          });
+      }
+    };
+    window.addEventListener("online", updateOnlineStatus);
+    window.addEventListener("offline", updateOnlineStatus);
+    return () => {
+      window.removeEventListener("online", updateOnlineStatus);
+      window.removeEventListener("offline", updateOnlineStatus);
+    };
+  }, []);
+
+  const applySaveResult = (result: SaveResult) => {
+    const status = getCloudStatus();
+    setCloudStatus(status);
+    setSaveError(result.error ?? status.lastError ?? "");
+    if (result.cloudSaved) setSaveState("cloud");
+    else if (result.offline && result.signedIn) setSaveState("offline");
+    else if (result.error || result.queued || status.pendingSync) setSaveState("syncIssue");
+    else if (!result.signedIn) setSaveState("notSignedIn");
+    else setSaveState("local");
+  };
+
+  const retrySync = async () => {
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      await syncCloudNow(data);
+      const status = getCloudStatus();
+      setCloudStatus(status);
+      setSaveState(status.signedIn ? "cloud" : "notSignedIn");
+    } catch (error) {
+      console.error("Manual sync failed.", error);
+      setSaveError(error instanceof Error ? error.message : "Manual sync failed.");
+      setCloudStatus(getCloudStatus());
+      setSaveState("syncIssue");
+    }
+  };
+
   const persistSettings = (settings: ProgramSettings) => {
     setSaveState("saving");
+    setSaveError("");
     setData((previous) => {
+      const updatedSettings = { ...settings, updatedAt: new Date().toISOString() };
+      const effectiveStart = effectiveProgramStartDate(updatedSettings, previous.workoutLogs);
       const next = {
         ...previous,
-        settings,
-        workoutLogs: previous.workoutLogs.map((log) => ({
-          ...log,
-          week: getProgramWeek(settings.startDate, log.date),
-        })),
+        settings: updatedSettings,
+        workoutLogs: previous.workoutLogs.map((log) => refreshProgramFields(log, effectiveStart)),
       };
-      saveSettings(settings, next)
-        .then(() => setSaveState("saved"))
-        .catch(() => setSaveState("error"));
+      saveSettings(updatedSettings, next)
+        .then(applySaveResult)
+        .catch((error) => {
+          console.error("Settings save failed.", error);
+          setSaveError(error instanceof Error ? error.message : "Settings save failed.");
+          setSaveState("syncIssue");
+        });
       return next;
     });
   };
 
   const persistWorkout = (log: WorkoutLog) => {
     setSaveState("saving");
+    setSaveError("");
     setData((previous) => {
+      const effectiveStart = effectiveProgramStartDate(previous.settings, previous.workoutLogs, log.date);
+      const updatedLog = refreshProgramFields({ ...log, updatedAt: new Date().toISOString() }, effectiveStart);
       const next = {
         ...previous,
-        workoutLogs: [log, ...previous.workoutLogs.filter((item) => item.id !== log.id)].sort((a, b) =>
+        workoutLogs: [updatedLog, ...previous.workoutLogs.filter((item) => item.id !== updatedLog.id)].sort((a, b) =>
           b.date.localeCompare(a.date),
         ),
       };
-      saveWorkoutLog(log, next)
-        .then(() => setSaveState("saved"))
-        .catch(() => setSaveState("error"));
+      saveWorkoutLog(updatedLog, next)
+        .then(applySaveResult)
+        .catch((error) => {
+          console.error("Workout save failed.", error);
+          setSaveError(error instanceof Error ? error.message : "Workout save failed.");
+          setSaveState("syncIssue");
+        });
       return next;
     });
   };
 
   const persistWeight = (log: BodyWeightLog) => {
     setSaveState("saving");
+    setSaveError("");
     setData((previous) => {
+      const updatedLog = { ...log, updatedAt: new Date().toISOString() };
       const next = {
         ...previous,
-        bodyWeights: [log, ...previous.bodyWeights.filter((item) => item.id !== log.id)].sort((a, b) =>
+        bodyWeights: [updatedLog, ...previous.bodyWeights.filter((item) => item.id !== updatedLog.id)].sort((a, b) =>
           a.date.localeCompare(b.date),
         ),
       };
-      saveBodyWeightLog(log, next)
-        .then(() => setSaveState("saved"))
-        .catch(() => setSaveState("error"));
+      saveBodyWeightLog(updatedLog, next)
+        .then(applySaveResult)
+        .catch((error) => {
+          console.error("Body weight save failed.", error);
+          setSaveError(error instanceof Error ? error.message : "Body weight save failed.");
+          setSaveState("syncIssue");
+        });
       return next;
     });
   };
 
   const removeWorkout = (id: string) => {
     setSaveState("saving");
+    setSaveError("");
     setData((previous) => {
       const next = { ...previous, workoutLogs: previous.workoutLogs.filter((log) => log.id !== id) };
       deleteWorkoutLog(id, next)
-        .then(() => setSaveState("saved"))
-        .catch(() => setSaveState("error"));
+        .then(applySaveResult)
+        .catch((error) => {
+          console.error("Workout delete failed.", error);
+          setSaveError(error instanceof Error ? error.message : "Workout delete failed.");
+          setSaveState("syncIssue");
+        });
       return next;
     });
   };
 
   const startWorkout = (date = todayISO()) => {
-    const log = getOrCreateLog(date, data.workoutLogs, data.settings);
+    const settings = data.settings.startDate
+      ? data.settings
+      : { ...data.settings, startDate: date, status: "active" as const, updatedAt: new Date().toISOString() };
+    const existing = data.workoutLogs.find((item) => item.date === date && item.dayKey === dayKeyForDate(date));
+    const log = existing ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings), data.workoutLogs);
+    if (!data.settings.startDate) {
+      persistSettings(settings);
+    }
     if (!data.workoutLogs.some((item) => item.id === log.id)) {
       persistWorkout(log);
     }
     navigate("logger", log.id);
   };
 
-  const currentWeek = getProgramWeek(data.settings.startDate, todayISO());
+  const effectiveStart = effectiveProgramStartDate(data.settings, data.workoutLogs);
+  const cycleInfo = getCycleInfo(effectiveStart, todayISO());
 
   return (
     <div className="app-shell">
@@ -276,7 +414,7 @@ function App() {
           </span>
           <span>
             <strong>Chad A</strong>
-            <small>8-week push</small>
+            <small>Cycle tracker</small>
           </span>
         </button>
         <nav>
@@ -291,22 +429,11 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="save-state">
-          <Circle size={9} className={saveState} />
-          {loading
-            ? "Loading"
-            : saveState === "saving"
-              ? "Saving"
-              : saveState === "error"
-                ? "Save issue"
-                : cloudStatus.signedIn
-                  ? "Saved to cloud"
-                  : "Saved locally"}
-        </div>
+        <SyncStatus saveState={saveState} loading={loading} cloudStatus={cloudStatus} saveError={saveError} onRetry={retrySync} />
       </aside>
 
       <main className="main">
-        <TopBar week={currentWeek} settings={data.settings} startWorkout={startWorkout} />
+        <TopBar cycleInfo={cycleInfo} settings={data.settings} startWorkout={startWorkout} />
         {loading ? (
           <LoadingScreen />
         ) : (
@@ -331,12 +458,40 @@ function App() {
                 settings={data.settings}
                 onSave={persistSettings}
                 cloudStatus={cloudStatus}
+                data={data}
                 refreshCloudStatus={() => setCloudStatus(getCloudStatus())}
+                onSyncNow={retrySync}
+                onImport={(importedData) => {
+                  const settings = { status: "active" as const, ...importedData.settings, updatedAt: new Date().toISOString() };
+                  const startDate = effectiveProgramStartDate(settings, importedData.workoutLogs);
+                  const normalized = {
+                    ...importedData,
+                    settings,
+                    workoutLogs: importedData.workoutLogs.map((log) => refreshProgramFields(log, startDate)),
+                  };
+                  setData(normalized);
+                  saveAppData(normalized)
+                    .then(applySaveResult)
+                    .catch((error) => {
+                      console.error("Import save failed.", error);
+                      setSaveError(error instanceof Error ? error.message : "Import save failed.");
+                      setSaveState("syncIssue");
+                    });
+                }}
               />
             )}
           </>
         )}
       </main>
+
+      <SyncStatus
+        saveState={saveState}
+        loading={loading}
+        cloudStatus={cloudStatus}
+        saveError={saveError}
+        onRetry={retrySync}
+        mobile
+      />
 
       <nav className="bottom-nav">
         {navItems.slice(0, 5).map((item) => (
@@ -355,11 +510,11 @@ function App() {
 }
 
 function TopBar({
-  week,
+  cycleInfo,
   settings,
   startWorkout,
 }: {
-  week: number;
+  cycleInfo: ReturnType<typeof getCycleInfo>;
   settings: ProgramSettings;
   startWorkout: (date?: string) => void;
 }) {
@@ -368,9 +523,13 @@ function TopBar({
   return (
     <header className="top-bar">
       <div>
-        <p className="eyebrow">Week {week} of 8</p>
+        <p className="eyebrow">Program Week {cycleInfo.programWeek} · Cycle {cycleInfo.cycle}, Week {cycleInfo.weekInCycle} of 8</p>
         <h1>{workout.shortTitle}</h1>
-        <span>{formatDate(today, { weekday: "long" })} from program start {formatDate(settings.startDate)}</span>
+        <span>
+          {formatDate(today, { weekday: "long" })}
+          {settings.startDate ? ` from program start ${formatDate(settings.startDate)}` : " · start date will lock on first workout"}
+          {settings.status && settings.status !== "active" ? ` · ${settings.status}` : ""}
+        </span>
       </div>
       <button className="primary-action" onClick={() => startWorkout(today)}>
         <Play size={18} />
@@ -396,11 +555,15 @@ function Dashboard({ data, startWorkout }: { data: AppData; startWorkout: (date?
   const today = todayISO();
   const dayKey = dayKeyForDate(today);
   const workout = workoutDays[dayKey];
-  const currentWeek = getProgramWeek(data.settings.startDate, today);
-  const weekCompleted = completedWorkoutsThisWeek(data.workoutLogs, data.settings, today);
-  const elapsedThisWeek = plannedTrainingDaysElapsedThisWeek(data.settings, today);
+  const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
+  const progressSettings = { ...data.settings, startDate };
+  const cycleInfo = getCycleInfo(startDate, today);
+  const currentWeek = cycleInfo.programWeek;
+  const weekCompleted = completedWorkoutsThisWeek(data.workoutLogs, progressSettings, today);
+  const elapsedThisWeek = plannedTrainingDaysElapsedThisWeek(progressSettings, today);
   const totalCompleted = completedProgramWorkouts(data.workoutLogs);
-  const totalWorkouts = totalProgramWorkouts();
+  const cycleCompleted = completedWorkoutsInCurrentCycle(data.workoutLogs, progressSettings, today);
+  const cycleTarget = cycleWorkoutTarget();
   const latestWeight = latestBodyWeight(data.bodyWeights);
   const weightChange = bodyWeightChange(data.bodyWeights);
   const completedLogs = data.workoutLogs.filter((log) => log.status === "completed");
@@ -456,7 +619,7 @@ function Dashboard({ data, startWorkout }: { data: AppData; startWorkout: (date?
 
       <div className="dashboard-row">
         <ProgressRing value={(weekCompleted / Math.max(1, elapsedThisWeek || 1)) * 100} label="week done" />
-        <ProgressRing value={(totalCompleted / totalWorkouts) * 100} label="program done" />
+        <ProgressRing value={(cycleCompleted / cycleTarget) * 100} label="cycle done" />
       </div>
 
       <section className="stats-grid">
@@ -464,14 +627,20 @@ function Dashboard({ data, startWorkout }: { data: AppData; startWorkout: (date?
           icon={CalendarDays}
           label="Workouts this week"
           value={`${weekCompleted}/${Math.max(elapsedThisWeek, 1)} due`}
-          detail={`Week ${currentWeek} has ${5 - weekCompleted} planned training days left or incomplete.`}
+          detail={`Program Week ${currentWeek}. Cycle ${cycleInfo.cycle}, Week ${cycleInfo.weekInCycle} of 8.`}
           tone={weekCompleted >= elapsedThisWeek ? "success" : "warning"}
         />
         <StatCard
           icon={Dumbbell}
-          label="8-week completion"
-          value={`${totalCompleted}/${totalWorkouts}`}
-          detail="Training days completed across the whole program."
+          label="This cycle"
+          value={`${cycleCompleted}/${cycleTarget}`}
+          detail={`Cycle ${cycleInfo.cycle} workouts completed.`}
+        />
+        <StatCard
+          icon={History}
+          label="All-time completed"
+          value={`${totalCompleted}`}
+          detail="Completed training days across every cycle."
         />
         <StatCard
           icon={Weight}
@@ -492,7 +661,7 @@ function Dashboard({ data, startWorkout }: { data: AppData; startWorkout: (date?
         </div>
         <div className="week-strip">
           {weeklySchedule.map((item, index) => {
-            const date = addDays(data.settings.startDate, (currentWeek - 1) * 7 + index);
+            const date = addDays(startDate, (currentWeek - 1) * 7 + index);
             const log = data.workoutLogs.find((entry) => entry.date === date && entry.status === "completed");
             return (
               <button key={item.key} className={classNames("week-day", item.key === dayKey && "today")} onClick={() => startWorkout(date)}>
@@ -548,7 +717,7 @@ function RoutinePage() {
         <div>
           <p className="eyebrow">Source of truth</p>
           <h2>Final Routine A by Chad</h2>
-          <p>Corrected 8-week home-gym aesthetic hypertrophy routine. Follow exactly for 8 weeks.</p>
+          <p>Corrected 8-week home-gym aesthetic hypertrophy routine. The tracker repeats this cycle until you archive or reset it.</p>
         </div>
         <label className="search-box">
           <Search size={18} />
@@ -760,11 +929,12 @@ function LoggerPage({
           <p className="eyebrow">Workout logger</p>
           <h2>{log.workoutTitle}</h2>
           <p>
-            {formatDate(log.date, { weekday: "long", year: "numeric" })} · Week {log.week} · {log.status}
+            {formatDate(log.date, { weekday: "long", year: "numeric" })} · Program Week {log.week} · Cycle {log.cycle ?? Math.floor((log.week - 1) / 8) + 1}, Week {log.weekInCycle ?? ((log.week - 1) % 8) + 1} · {log.status}
           </p>
         </div>
         <div className="logger-actions">
           <button className="secondary-action danger" onClick={() => {
+            if (!window.confirm("Delete this workout log? This removes it locally and from cloud sync when signed in.")) return;
             onDelete(log.id);
             navigate("history");
           }}>
@@ -858,6 +1028,17 @@ function LogExerciseCard({
     });
   };
 
+  const copyPreviousWeights = () => {
+    if (!previous) return;
+    onChange({
+      ...exerciseLog,
+      sets: exerciseLog.sets.map((set, index) => ({
+        ...set,
+        weight: previous.exerciseLog.sets[index]?.weight ?? set.weight,
+      })),
+    });
+  };
+
   if (cardio) {
     return (
       <section className="panel log-card cardio-log">
@@ -946,6 +1127,10 @@ function LogExerciseCard({
         <div className="previous-box">
           <strong>Previous:</strong> {formatDate(previous.workout.date)} · {Math.round(exerciseVolume(previous.exerciseLog)).toLocaleString()} volume ·{" "}
           {previous.exerciseLog.sets.filter((set) => set.completed).length} sets
+          <span>{previousSetSummary(previous.exerciseLog, exercise)}</span>
+          <button className="mini-action" type="button" onClick={copyPreviousWeights}>
+            Copy previous weights
+          </button>
         </div>
       )}
       <div className="set-table">
@@ -968,26 +1153,47 @@ function LogExerciseCard({
         </div>
         {exerciseLog.sets.map((set) => (
           <div key={set.id} className="set-row">
-            <strong>{set.setNumber}</strong>
-            <span>{set.target}</span>
-            <input value={set.weight ?? ""} onChange={(event) => updateSet(set.id, { weight: event.target.value })} inputMode="decimal" placeholder="lb" />
+            <div className="set-cell set-number"><span>Set</span><strong>{set.setNumber}</strong></div>
+            <div className="set-cell"><span>Target</span><strong>{set.target}</strong></div>
+            <label className="set-cell">
+              <span>Weight</span>
+              <input value={set.weight ?? ""} onChange={(event) => updateSet(set.id, { weight: event.target.value })} inputMode="decimal" placeholder="lb" />
+            </label>
             {exercise.kind === "timed" ? (
-              <input value={set.seconds ?? ""} onChange={(event) => updateSet(set.id, { seconds: event.target.value })} inputMode="numeric" placeholder="sec" />
+              <label className="set-cell">
+                <span>Seconds</span>
+                <input value={set.seconds ?? ""} onChange={(event) => updateSet(set.id, { seconds: event.target.value })} inputMode="numeric" placeholder="sec" />
+              </label>
             ) : exercise.unilateral ? (
               <>
-                <input value={set.leftReps ?? ""} onChange={(event) => updateSet(set.id, { leftReps: event.target.value })} inputMode="numeric" placeholder="L" />
-                <input value={set.rightReps ?? ""} onChange={(event) => updateSet(set.id, { rightReps: event.target.value })} inputMode="numeric" placeholder="R" />
+                <label className="set-cell">
+                  <span>Left</span>
+                  <input value={set.leftReps ?? ""} onChange={(event) => updateSet(set.id, { leftReps: event.target.value })} inputMode="numeric" placeholder="L" />
+                </label>
+                <label className="set-cell">
+                  <span>Right</span>
+                  <input value={set.rightReps ?? ""} onChange={(event) => updateSet(set.id, { rightReps: event.target.value })} inputMode="numeric" placeholder="R" />
+                </label>
               </>
             ) : (
-              <input value={set.reps ?? ""} onChange={(event) => updateSet(set.id, { reps: event.target.value })} inputMode="numeric" placeholder="reps" />
+              <label className="set-cell">
+                <span>Reps</span>
+                <input value={set.reps ?? ""} onChange={(event) => updateSet(set.id, { reps: event.target.value })} inputMode="numeric" placeholder="reps" />
+              </label>
             )}
-            <input value={set.rir ?? ""} onChange={(event) => updateSet(set.id, { rir: event.target.value })} inputMode="decimal" placeholder="RIR" />
-            <input
-              type="checkbox"
-              checked={set.completed}
-              onChange={(event) => updateSet(set.id, { completed: event.target.checked })}
-              aria-label={`Set ${set.setNumber} completed`}
-            />
+            <label className="set-cell">
+              <span>RIR</span>
+              <input value={set.rir ?? ""} onChange={(event) => updateSet(set.id, { rir: event.target.value })} inputMode="decimal" placeholder="RIR" />
+            </label>
+            <label className="set-cell done-cell">
+              <span>Done</span>
+              <input
+                type="checkbox"
+                checked={set.completed}
+                onChange={(event) => updateSet(set.id, { completed: event.target.checked })}
+                aria-label={`Set ${set.setNumber} completed`}
+              />
+            </label>
           </div>
         ))}
       </div>
@@ -1026,7 +1232,26 @@ function NumberField({
 function ProgressPage({ data }: { data: AppData }) {
   const exerciseNames = useMemo(() => Array.from(new Set(allExercises.map((exercise) => exercise.name))).sort(), []);
   const [selectedExercise, setSelectedExercise] = useState(exerciseNames[0] ?? "");
-  const sessions = exerciseSessions(data.workoutLogs, selectedExercise);
+  const [range, setRange] = useState<"week" | "cycle" | "last8" | "all">("cycle");
+  const today = todayISO();
+  const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
+  const progressSettings = { ...data.settings, startDate };
+  const cycleInfo = getCycleInfo(startDate, today);
+  const filteredLogs = data.workoutLogs.filter((log) => {
+    if (range === "all") return true;
+    if (range === "cycle") return (log.cycle ?? Math.floor((log.week - 1) / 8) + 1) === cycleInfo.cycle;
+    if (range === "week") return log.week === cycleInfo.programWeek;
+    const cutoffWeek = Math.max(1, cycleInfo.programWeek - 7);
+    return log.week >= cutoffWeek;
+  });
+  const filteredWeights = data.bodyWeights.filter((entry) => {
+    if (range === "all") return true;
+    const entryWeek = getCycleInfo(startDate, entry.date).programWeek;
+    if (range === "cycle") return getCycleInfo(startDate, entry.date).cycle === cycleInfo.cycle;
+    if (range === "week") return entryWeek === cycleInfo.programWeek;
+    return entryWeek >= Math.max(1, cycleInfo.programWeek - 7);
+  });
+  const sessions = exerciseSessions(filteredLogs, selectedExercise);
   const volumePoints = sessions.map((session) => exerciseVolume(session.exerciseLog));
   const repPoints = sessions.map((session) =>
     session.exerciseLog.sets.reduce((sum, set) => sum + repsForSet(set, session.exercise), 0),
@@ -1039,7 +1264,20 @@ function ProgressPage({ data }: { data: AppData }) {
     (winner, session) => (exerciseVolume(session.exerciseLog) > exerciseVolume(winner?.exerciseLog as ExerciseLog) ? session : winner),
     sessions[0],
   );
-  const weekly = weeklySummaries(data.workoutLogs, data.settings);
+  const weekly = weeklySummaries(filteredLogs, progressSettings);
+  const cycleRows = Array.from(
+    filteredLogs.reduce((map, log) => {
+      const cycle = log.cycle ?? Math.floor((log.week - 1) / 8) + 1;
+      const current = map.get(cycle) ?? { cycle, completed: 0, sets: 0, volume: 0 };
+      if (log.status === "completed") {
+        current.completed += isTrainingDay(log.dayKey) ? 1 : 0;
+        current.sets += completedSetCount(log);
+        current.volume += workoutVolume(log);
+      }
+      map.set(cycle, current);
+      return map;
+    }, new Map<number, { cycle: number; completed: number; sets: number; volume: number }>()),
+  ).map(([, value]) => value);
 
   return (
     <div className="content-stack">
@@ -1049,6 +1287,12 @@ function ProgressPage({ data }: { data: AppData }) {
             <p className="eyebrow">Exercise progress</p>
             <h2>Trends by lift</h2>
           </div>
+          <select value={range} onChange={(event) => setRange(event.target.value as typeof range)}>
+            <option value="week">This week</option>
+            <option value="cycle">Current cycle</option>
+            <option value="last8">Last 8 weeks</option>
+            <option value="all">All time</option>
+          </select>
           <select value={selectedExercise} onChange={(event) => setSelectedExercise(event.target.value)}>
             {exerciseNames.map((name) => (
               <option key={name} value={name}>{name}</option>
@@ -1118,6 +1362,11 @@ function ProgressPage({ data }: { data: AppData }) {
             </div>
           ))}
         </div>
+        <div className="chart-grid">
+          <ChartPanel title="Workout volume" values={weekly.map((week) => week.volume)} stroke="#f5b84b" />
+          <ChartPanel title="Body weight" values={filteredWeights.map((entry) => entry.weight)} stroke="#73a7ff" />
+          <ChartPanel title="Weekly sets" values={weekly.map((week) => week.sets)} />
+        </div>
         <div className="responsive-table">
           <table>
             <thead>
@@ -1144,6 +1393,41 @@ function ProgressPage({ data }: { data: AppData }) {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Cycle comparison</p>
+            <h2>Cycle-by-cycle workload</h2>
+          </div>
+        </div>
+        {cycleRows.length ? (
+          <div className="responsive-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cycle</th>
+                  <th>Completed workouts</th>
+                  <th>Sets</th>
+                  <th>Volume</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cycleRows.map((row) => (
+                  <tr key={row.cycle}>
+                    <td>{row.cycle}</td>
+                    <td>{row.completed}</td>
+                    <td>{row.sets}</td>
+                    <td>{Math.round(row.volume).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state">Complete workouts to compare cycles.</div>
+        )}
       </section>
     </div>
   );
@@ -1251,9 +1535,21 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
 
 function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (date?: string) => void }) {
   const [filter, setFilter] = useState("");
+  const [dayFilter, setDayFilter] = useState<"all" | DayKey>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "completed">("all");
+  const [cycleFilter, setCycleFilter] = useState("all");
+  const cycles = Array.from(new Set(data.workoutLogs.map((log) => String(log.cycle ?? Math.floor((log.week - 1) / 8) + 1)))).sort();
   const filtered = data.workoutLogs.filter((log) => {
     const query = filter.toLowerCase();
-    return `${log.workoutTitle} ${log.date} ${log.notes ?? ""}`.toLowerCase().includes(query);
+    const exerciseText = log.exerciseLogs.map((item) => exerciseNameForId(item.exerciseId)).join(" ");
+    const haystack = `${log.workoutTitle} ${log.date} ${log.notes ?? ""} ${exerciseText}`.toLowerCase();
+    const cycle = String(log.cycle ?? Math.floor((log.week - 1) / 8) + 1);
+    return (
+      haystack.includes(query) &&
+      (dayFilter === "all" || log.dayKey === dayFilter) &&
+      (statusFilter === "all" || log.status === statusFilter) &&
+      (cycleFilter === "all" || cycle === cycleFilter)
+    );
   });
   return (
     <div className="content-stack">
@@ -1265,15 +1561,34 @@ function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (dat
           </div>
           <label className="search-box small">
             <Search size={18} />
-            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Search history" />
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Search exercise, notes, date" />
           </label>
+        </div>
+        <div className="history-filters">
+          <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value as "all" | DayKey)}>
+            <option value="all">All days</option>
+            {weeklySchedule.map((item) => (
+              <option key={item.key} value={item.key}>{item.day}</option>
+            ))}
+          </select>
+          <select value={cycleFilter} onChange={(event) => setCycleFilter(event.target.value)}>
+            <option value="all">All cycles</option>
+            {cycles.map((cycle) => (
+              <option key={cycle} value={cycle}>Cycle {cycle}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | "draft" | "completed")}>
+            <option value="all">Draft + completed</option>
+            <option value="draft">Draft only</option>
+            <option value="completed">Completed only</option>
+          </select>
         </div>
         {filtered.length ? (
           <div className="history-list">
             {filtered.map((log) => (
               <article key={log.id} className="history-card">
                 <div>
-                  <p className="eyebrow">Week {log.week} · {log.status}</p>
+                  <p className="eyebrow">Program Week {log.week} · Cycle {log.cycle ?? Math.floor((log.week - 1) / 8) + 1} · {log.status}</p>
                   <h3>{log.workoutTitle}</h3>
                   <p>{formatDate(log.date, { weekday: "long", year: "numeric" })}</p>
                   <div className="exercise-meta">
@@ -1306,17 +1621,24 @@ function SettingsPage({
   settings,
   onSave,
   cloudStatus,
+  data,
   refreshCloudStatus,
+  onSyncNow,
+  onImport,
 }: {
   settings: ProgramSettings;
   onSave: (settings: ProgramSettings) => void;
   cloudStatus: ReturnType<typeof getCloudStatus>;
+  data: AppData;
   refreshCloudStatus: () => void;
+  onSyncNow: () => void;
+  onImport: (data: AppData) => void;
 }) {
   const [startDate, setStartDate] = useState(settings.startDate);
   const [email, setEmail] = useState("");
   const [cloudMessage, setCloudMessage] = useState("");
   const [cloudBusy, setCloudBusy] = useState(false);
+  const localDataExists = data.workoutLogs.length > 0 || data.bodyWeights.length > 0;
 
   const requestLink = async (event: FormEvent) => {
     event.preventDefault();
@@ -1341,6 +1663,41 @@ function SettingsPage({
     refreshCloudStatus();
   };
 
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `training-dashboard-backup-${todayISO()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = async (file?: File) => {
+    if (!file) return;
+    try {
+      const imported = JSON.parse(await file.text()) as AppData;
+      if (!imported.settings || !Array.isArray(imported.workoutLogs) || !Array.isArray(imported.bodyWeights)) {
+        throw new Error("Backup file does not match the app data format.");
+      }
+      if (!window.confirm("Import this backup? It will replace the data currently loaded in this browser.")) return;
+      onImport(imported);
+      setCloudMessage("Backup imported. Use Sync now if you want to push it to cloud.");
+    } catch (error) {
+      setCloudMessage(error instanceof Error ? error.message : "Could not import backup.");
+    }
+  };
+
+  const saveProgramStatus = (status: ProgramSettings["status"]) => {
+    onSave({
+      ...settings,
+      startDate: startDate || settings.startDate,
+      status,
+      pausedAt: status === "paused" ? new Date().toISOString() : settings.pausedAt,
+      completedAt: status === "completed" ? new Date().toISOString() : settings.completedAt,
+    });
+  };
+
   return (
     <div className="content-stack">
       <section className="panel">
@@ -1355,9 +1712,27 @@ function SettingsPage({
             Start date
             <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
           </label>
-          <button className="primary-action" onClick={() => onSave({ startDate })}>
+          <button className="primary-action" onClick={() => onSave({ ...settings, startDate, status: settings.status ?? "active" })}>
             <Save size={18} />
             Save settings
+          </button>
+        </div>
+        <div className="settings-actions">
+          <button className="secondary-action" type="button" onClick={() => saveProgramStatus("paused")}>
+            Pause program
+          </button>
+          <button className="secondary-action" type="button" onClick={() => saveProgramStatus("active")}>
+            Resume program
+          </button>
+          <button className="secondary-action" type="button" onClick={() => saveProgramStatus("completed")}>
+            Mark complete
+          </button>
+          <button className="secondary-action" type="button" onClick={() => {
+            const today = todayISO();
+            setStartDate(today);
+            onSave({ ...settings, startDate: today, status: "active" });
+          }}>
+            Start new cycle
           </button>
         </div>
         <div className="schema-grid">
@@ -1391,30 +1766,66 @@ function SettingsPage({
           <div className="cloud-auth-row">
             <div>
               <h3>Signed in</h3>
-              <p>{cloudStatus.email ?? "Supabase user"} · logs save to the cloud from this browser.</p>
+              <p>
+                {cloudStatus.email ?? "Supabase user"} · same logs can appear across phone/computer.
+                {cloudStatus.lastSyncAt ? ` Last sync ${new Date(cloudStatus.lastSyncAt).toLocaleString()}.` : " No completed cloud sync recorded yet."}
+                {cloudStatus.pendingSync ? " Pending local changes need sync." : ""}
+              </p>
             </div>
-            <button className="secondary-action" onClick={signOut} disabled={cloudBusy}>
-              Sign out
-            </button>
+            <div className="cloud-buttons">
+              <button className="primary-action" type="button" onClick={onSyncNow} disabled={cloudBusy}>
+                Sync now
+              </button>
+              <button className="secondary-action" onClick={signOut} disabled={cloudBusy}>
+                Sign out
+              </button>
+            </div>
           </div>
         ) : (
-          <form className="cloud-auth-form" onSubmit={requestLink}>
-            <label className="field-label">
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
-                required
-              />
-            </label>
-            <button className="primary-action" type="submit" disabled={cloudBusy}>
-              {cloudBusy ? "Sending..." : "Send magic link"}
-            </button>
-          </form>
+          <>
+            <p className="cloud-note">Sign in to save the same workout logs across your phone and computer. Local logs already on this phone will be merged into cloud after sign-in.</p>
+            <form className="cloud-auth-form" onSubmit={requestLink}>
+              <label className="field-label">
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  required
+                />
+              </label>
+              <button className="primary-action" type="submit" disabled={cloudBusy}>
+                {cloudBusy ? "Sending..." : cloudMessage.startsWith("Magic link sent") ? "Send magic link again" : "Send magic link"}
+              </button>
+            </form>
+          </>
         )}
+        <div className="sync-facts">
+          <span>{cloudStatus.online ? "Online" : "Offline"}</span>
+          <span>{localDataExists ? "Local data exists" : "No local logs yet"}</span>
+          <span>{cloudStatus.pendingSync ? "Pending sync" : "No pending sync"}</span>
+          <span>{cloudStatus.signedIn ? "Cloud signed in" : "Cloud not signed in"}</span>
+        </div>
         {(cloudMessage || cloudStatus.lastError) && <div className="guidance-card">{cloudMessage || cloudStatus.lastError}</div>}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Backup</p>
+            <h2>Export / import data</h2>
+          </div>
+        </div>
+        <div className="settings-actions">
+          <button className="secondary-action" type="button" onClick={exportData}>
+            Export JSON
+          </button>
+          <label className="secondary-action import-button">
+            Import JSON
+            <input type="file" accept="application/json" onChange={(event) => importData(event.target.files?.[0])} />
+          </label>
+        </div>
       </section>
     </div>
   );

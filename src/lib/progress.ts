@@ -8,7 +8,7 @@ import {
   WorkoutLog,
 } from "../types";
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
-import { addDays, dayKeyForDate, daysSince, getProgramWeek, todayISO } from "./date";
+import { addDays, dayKeyForDate, daysSince, getCycleInfo, getProgramWeek, todayISO } from "./date";
 
 export const allExercises = Object.values(workoutDays).flatMap((day) => day.exercises);
 
@@ -42,6 +42,8 @@ export function createSetLogs(exercise: Exercise): SetLog[] {
 export function createWorkoutLog(date: string, settings: ProgramSettings): WorkoutLog {
   const dayKey = dayKeyForDate(date);
   const workout = getWorkoutByKey(dayKey);
+  const effectiveStartDate = settings.startDate || date;
+  const cycleInfo = getCycleInfo(effectiveStartDate, date);
   const exerciseLogs: ExerciseLog[] = [
     ...workout.exercises.map((exercise) => ({
       id: createId("exercise"),
@@ -66,11 +68,14 @@ export function createWorkoutLog(date: string, settings: ProgramSettings): Worko
   return {
     id: createId("workout"),
     date,
-    week: getProgramWeek(settings.startDate, date),
+    week: cycleInfo.programWeek,
+    cycle: cycleInfo.cycle,
+    weekInCycle: cycleInfo.weekInCycle,
     dayKey,
     workoutTitle: workout.title,
     status: "draft",
     startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     exerciseLogs,
   };
 }
@@ -130,12 +135,12 @@ export function completedProgramWorkouts(logs: WorkoutLog[]): number {
 }
 
 export function completedWorkoutsThisWeek(logs: WorkoutLog[], settings: ProgramSettings, date = todayISO()): number {
-  const week = getProgramWeek(settings.startDate, date);
+  const week = getProgramWeek(settings.startDate || date, date);
   return logs.filter((log) => log.status === "completed" && log.week === week && isTrainingDay(log.dayKey)).length;
 }
 
 export function plannedTrainingDaysElapsedThisWeek(settings: ProgramSettings, date = todayISO()): number {
-  const week = getProgramWeek(settings.startDate, date);
+  const week = getProgramWeek(settings.startDate || date, date);
   const startOffset = (week - 1) * 7;
   const elapsed = Math.max(0, Math.min(6, daysSince(settings.startDate, date) - startOffset));
   let count = 0;
@@ -147,13 +152,20 @@ export function plannedTrainingDaysElapsedThisWeek(settings: ProgramSettings, da
 }
 
 export function weeklySummaries(logs: WorkoutLog[], settings: ProgramSettings) {
-  return Array.from({ length: 8 }, (_, index) => {
+  const maxLoggedWeek = Math.max(
+    8,
+    ...logs.map((log) => log.week || getProgramWeek(settings.startDate || log.date, log.date)),
+    getProgramWeek(settings.startDate || todayISO(), todayISO()),
+  );
+  return Array.from({ length: maxLoggedWeek }, (_, index) => {
     const week = index + 1;
     const weekLogs = logs.filter((log) => log.week === week && log.status === "completed");
     const trainingLogs = weekLogs.filter((log) => isTrainingDay(log.dayKey));
     const notes = weekLogs.map((log) => log.notes).filter(Boolean) as string[];
     return {
       week,
+      cycle: Math.floor((week - 1) / 8) + 1,
+      weekInCycle: ((week - 1) % 8) + 1,
       completed: trainingLogs.length,
       sets: weekLogs.reduce((sum, log) => sum + completedSetCount(log), 0),
       volume: weekLogs.reduce((sum, log) => sum + workoutVolume(log), 0),
@@ -162,6 +174,63 @@ export function weeklySummaries(logs: WorkoutLog[], settings: ProgramSettings) {
       warning: hasRecoveryWarning(logs, week, settings),
     };
   });
+}
+
+export function effectiveProgramStartDate(settings: ProgramSettings, logs: WorkoutLog[], fallback = todayISO()): string {
+  if (settings.startDate) return settings.startDate;
+  return [...logs].sort((a, b) => a.date.localeCompare(b.date))[0]?.date ?? fallback;
+}
+
+export function refreshProgramFields(log: WorkoutLog, startDate: string): WorkoutLog {
+  const cycleInfo = getCycleInfo(startDate || log.date, log.date);
+  return {
+    ...log,
+    week: cycleInfo.programWeek,
+    cycle: cycleInfo.cycle,
+    weekInCycle: cycleInfo.weekInCycle,
+  };
+}
+
+export function completedWorkoutsInCurrentCycle(logs: WorkoutLog[], settings: ProgramSettings, date = todayISO()): number {
+  const cycle = getCycleInfo(settings.startDate || date, date).cycle;
+  return logs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey) && (log.cycle ?? Math.floor((log.week - 1) / 8) + 1) === cycle).length;
+}
+
+export function cycleWorkoutTarget(): number {
+  return trainingDayKeys.length * 8;
+}
+
+export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]): WorkoutLog {
+  return {
+    ...log,
+    exerciseLogs: log.exerciseLogs.map((exerciseLog) => {
+      const exercise = findExercise(exerciseLog.exerciseId);
+      if (!exercise) return exerciseLog;
+      const previous = previousExercisePerformance(logs, log.date, exercise.name);
+      if (!previous) return exerciseLog;
+      return {
+        ...exerciseLog,
+        sets: exerciseLog.sets.map((set, index) => ({
+          ...set,
+          weight: previous.exerciseLog.sets[index]?.weight ?? set.weight,
+        })),
+      };
+    }),
+  };
+}
+
+export function previousSetSummary(exerciseLog: ExerciseLog, exercise?: Exercise): string {
+  if (!exerciseLog.sets.length) return "";
+  return exerciseLog.sets
+    .map((set) => {
+      const performance = exercise?.kind === "timed"
+        ? `${set.seconds || "-"} sec`
+        : exercise?.unilateral
+          ? `${set.leftReps || "-"}/${set.rightReps || "-"} reps`
+          : `${set.reps || "-"} reps`;
+      return `S${set.setNumber}: ${set.weight || "-"} lb x ${performance}`;
+    })
+    .join(" · ");
 }
 
 export function hasRecoveryWarning(logs: WorkoutLog[], week: number, _settings: ProgramSettings): boolean {

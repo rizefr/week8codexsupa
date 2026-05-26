@@ -21,6 +21,9 @@ type CloudDataResult = {
 };
 
 const CLOUD_SESSION_KEY = "chad-aesthetic-dashboard:supabase-session";
+const CLOUD_LAST_SYNC_KEY = "chad-aesthetic-dashboard:last-cloud-sync";
+const CLOUD_PENDING_SNAPSHOT_KEY = "chad-aesthetic-dashboard:pending-cloud-snapshot";
+const CLOUD_PENDING_DELETES_KEY = "chad-aesthetic-dashboard:pending-cloud-deletes";
 
 let lastCloudError = "";
 
@@ -86,6 +89,47 @@ function clearSession(): void {
   localStorage.removeItem(CLOUD_SESSION_KEY);
 }
 
+function setLastSyncNow(): void {
+  localStorage.setItem(CLOUD_LAST_SYNC_KEY, new Date().toISOString());
+}
+
+function readPendingDeletes(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(CLOUD_PENDING_DELETES_KEY) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+export function getQueuedCloudDeleteIds(): string[] {
+  return readPendingDeletes();
+}
+
+function writePendingDeletes(ids: string[]): void {
+  const uniqueIds = Array.from(new Set(ids));
+  if (!uniqueIds.length) {
+    localStorage.removeItem(CLOUD_PENDING_DELETES_KEY);
+    return;
+  }
+  localStorage.setItem(CLOUD_PENDING_DELETES_KEY, JSON.stringify(uniqueIds));
+}
+
+export function queueCloudSnapshot(data: AppData, error?: unknown): void {
+  localStorage.setItem(CLOUD_PENDING_SNAPSHOT_KEY, JSON.stringify(data));
+  if (error) {
+    lastCloudError = error instanceof Error ? error.message : "Cloud sync failed. Local data was kept.";
+    console.error("Cloud sync failed; queued local snapshot.", error);
+  }
+}
+
+export function queueCloudWorkoutDelete(id: string, error?: unknown): void {
+  writePendingDeletes([...readPendingDeletes(), id]);
+  if (error) {
+    lastCloudError = error instanceof Error ? error.message : "Cloud delete failed. Local delete was kept.";
+    console.error("Cloud delete failed; queued workout delete.", error);
+  }
+}
+
 export function consumeCloudAuthRedirect(): boolean {
   if (!window.location.hash.includes("access_token=")) return false;
   const params = new URLSearchParams(window.location.hash.slice(1));
@@ -102,11 +146,16 @@ export function consumeCloudAuthRedirect(): boolean {
 
 export function getCloudStatus() {
   const session = readSession();
+  const pendingSnapshot = localStorage.getItem(CLOUD_PENDING_SNAPSHOT_KEY);
+  const pendingDeletes = readPendingDeletes();
   return {
     configured: isCloudConfigured(),
     signedIn: Boolean(session?.access_token),
     email: session?.user?.email,
     userId: session?.user?.id,
+    online: navigator.onLine,
+    pendingSync: Boolean(pendingSnapshot) || pendingDeletes.length > 0,
+    lastSyncAt: localStorage.getItem(CLOUD_LAST_SYNC_KEY) ?? undefined,
     lastError: lastCloudError,
   };
 }
@@ -223,8 +272,9 @@ export async function saveCloudSettings(settings: ProgramSettings): Promise<void
   await cloudFetch("/rest/v1/app_settings?on_conflict=user_id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({ user_id: userId, settings }),
+    body: JSON.stringify({ user_id: userId, settings, updated_at: settings.updatedAt ?? new Date().toISOString() }),
   }, session);
+  setLastSyncNow();
 }
 
 export async function saveCloudWorkoutLog(log: WorkoutLog): Promise<void> {
@@ -235,8 +285,9 @@ export async function saveCloudWorkoutLog(log: WorkoutLog): Promise<void> {
   await cloudFetch("/rest/v1/workout_logs?on_conflict=id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({ id: log.id, user_id: userId, date: log.date, day_key: log.dayKey, log }),
+    body: JSON.stringify({ id: log.id, user_id: userId, date: log.date, day_key: log.dayKey, log, updated_at: log.updatedAt ?? new Date().toISOString() }),
   }, session);
+  setLastSyncNow();
 }
 
 export async function saveCloudBodyWeightLog(log: BodyWeightLog): Promise<void> {
@@ -247,8 +298,9 @@ export async function saveCloudBodyWeightLog(log: BodyWeightLog): Promise<void> 
   await cloudFetch("/rest/v1/body_weight_logs?on_conflict=id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({ id: log.id, user_id: userId, date: log.date, log }),
+    body: JSON.stringify({ id: log.id, user_id: userId, date: log.date, log, updated_at: log.updatedAt ?? new Date().toISOString() }),
   }, session);
+  setLastSyncNow();
 }
 
 export async function deleteCloudWorkoutLog(id: string): Promise<void> {
@@ -256,12 +308,39 @@ export async function deleteCloudWorkoutLog(id: string): Promise<void> {
   const session = await currentSession();
   if (!session || !isCloudConfigured()) return;
   await cloudFetch(`/rest/v1/workout_logs?id=eq.${encodeURIComponent(id)}`, { method: "DELETE" }, session);
+  writePendingDeletes(readPendingDeletes().filter((pendingId) => pendingId !== id));
+  setLastSyncNow();
 }
 
 export async function saveCloudSnapshot(data: AppData): Promise<void> {
+  if (!data.workoutLogs.length && !data.bodyWeights.length && !data.settings.startDate) {
+    return;
+  }
   await saveCloudSettings(data.settings);
   await Promise.all([
     ...data.workoutLogs.map((log) => saveCloudWorkoutLog(log)),
     ...data.bodyWeights.map((log) => saveCloudBodyWeightLog(log)),
   ]);
+  setLastSyncNow();
+}
+
+export async function syncCloudNow(currentData?: AppData): Promise<void> {
+  lastCloudError = "";
+  const session = await currentSession();
+  if (!session || !isCloudConfigured()) {
+    throw new Error("Sign in to Cloud Sync before syncing.");
+  }
+  const pendingRaw = localStorage.getItem(CLOUD_PENDING_SNAPSHOT_KEY);
+  const pendingData = pendingRaw ? (JSON.parse(pendingRaw) as AppData) : undefined;
+  const dataToSync = pendingData ?? currentData;
+  if (dataToSync) {
+    await saveCloudSnapshot(dataToSync);
+  }
+  const pendingDeletes = readPendingDeletes();
+  for (const id of pendingDeletes) {
+    await deleteCloudWorkoutLog(id);
+  }
+  localStorage.removeItem(CLOUD_PENDING_SNAPSHOT_KEY);
+  writePendingDeletes([]);
+  setLastSyncNow();
 }

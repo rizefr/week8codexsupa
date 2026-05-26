@@ -76,6 +76,10 @@ export interface TableSection<RowType extends Record<string, string>> {
 
 export interface ProgramSettings {
   startDate: string;
+  status?: "active" | "paused" | "completed";
+  pausedAt?: string;
+  completedAt?: string;
+  updatedAt?: string;
 }
 
 export interface SetLog {
@@ -111,11 +115,14 @@ export interface WorkoutLog {
   id: string;
   date: string;
   week: number;
+  cycle?: number;
+  weekInCycle?: number;
   dayKey: DayKey;
   workoutTitle: string;
   status: LogStatus;
   startedAt: string;
   completedAt?: string;
+  updatedAt?: string;
   notes?: string;
   exerciseLogs: ExerciseLog[];
 }
@@ -125,6 +132,7 @@ export interface BodyWeightLog {
   date: string;
   weight: number;
   note?: string;
+  updatedAt?: string;
 }
 
 export interface AppData {
