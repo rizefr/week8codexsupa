@@ -304,12 +304,258 @@ input[type="checkbox"] {
 }
 
 .hero-panel,
+.mission-panel,
+.recap-hero,
 .panel,
 .loading-card {
   border: 1px solid var(--line);
   background: var(--panel);
   box-shadow: var(--shadow);
   border-radius: 8px;
+}
+
+.mission-panel,
+.recap-hero {
+  padding: clamp(1.1rem, 3vw, 1.8rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.65fr);
+  gap: 1rem;
+  align-items: stretch;
+  background:
+    linear-gradient(120deg, rgba(18, 28, 43, 0.98), rgba(18, 28, 43, 0.82)),
+    radial-gradient(circle at top right, rgba(61, 214, 163, 0.22), transparent 18rem);
+}
+
+.mission-panel h2,
+.recap-hero h2 {
+  margin: 0.25rem 0 0.45rem;
+}
+
+.mission-meta,
+.mission-action,
+.game-card,
+.logger-game-strip,
+.recap-events,
+.heat-summary {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.055);
+  border-radius: 8px;
+}
+
+.mission-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+  padding: 0.7rem;
+}
+
+.mission-meta span,
+.mission-action span,
+.game-card span,
+.heat-summary span,
+.mini-list span,
+.badge-card span,
+.recap-hero span {
+  color: var(--muted-strong);
+}
+
+.mission-action {
+  padding: 1rem;
+  display: grid;
+  align-content: center;
+  gap: 0.65rem;
+}
+
+.mission-action strong {
+  font-size: 1.15rem;
+}
+
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.game-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.game-card {
+  min-height: 164px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+}
+
+.game-card h3 {
+  font-size: 1.35rem;
+}
+
+.game-card > strong,
+.big-number {
+  font-size: 1.75rem;
+}
+
+.xp-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.xp-bar.large {
+  height: 14px;
+  max-width: 520px;
+  margin: 1rem 0 0.45rem;
+}
+
+.xp-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green), var(--blue));
+}
+
+.draft-list,
+.mini-list,
+.recap-events {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.draft-card {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.8rem;
+  text-align: left;
+  display: grid;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.draft-card span {
+  color: var(--muted);
+}
+
+.logger-game-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.logger-game-strip span,
+.recap-events span,
+.mini-list span {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+}
+
+.recap-hero {
+  grid-template-columns: 1fr;
+}
+
+.recap-hero h2 {
+  font-size: clamp(2.4rem, 9vw, 4.8rem);
+}
+
+.celebration-line {
+  border: 1px solid rgba(61, 214, 163, 0.24);
+  background: rgba(61, 214, 163, 0.08);
+  color: #d8fff0;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  text-align: center;
+}
+
+.heatmap-wrap {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+  gap: 0.28rem;
+  max-width: 100%;
+}
+
+.heatmap-wrap.compact .heatmap-grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.heat-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.055);
+  cursor: pointer;
+}
+
+.heat-cell.rest {
+  background: rgba(115, 167, 255, 0.22);
+}
+
+.heat-cell.started {
+  background: rgba(245, 184, 75, 0.28);
+}
+
+.heat-cell.completed {
+  background: rgba(61, 214, 163, 0.34);
+}
+
+.heat-cell.full {
+  background: rgba(61, 214, 163, 0.62);
+}
+
+.heat-cell.high {
+  background: linear-gradient(135deg, var(--green), var(--amber));
+}
+
+.heat-summary {
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.badge-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+}
+
+.badge-card {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.045);
+  border-radius: 8px;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.badge-card.unlocked {
+  border-color: rgba(61, 214, 163, 0.36);
+  background: rgba(61, 214, 163, 0.08);
+}
+
+.empty-state.compact {
+  min-height: auto;
+  place-items: start;
+  text-align: left;
 }
 
 .hero-panel {
@@ -1040,6 +1286,9 @@ tr:last-child td {
   .quick-grid,
   .stats-grid,
   .stats-grid.compact,
+  .game-grid,
+  .game-grid.two,
+  .badge-grid,
   .chart-grid,
   .rule-grid,
   .schedule-grid,
@@ -1057,6 +1306,9 @@ tr:last-child td {
 
   .top-bar,
   .hero-panel,
+  .mission-panel,
+  .game-grid,
+  .game-grid.two,
   .section-heading,
   .logger-header,
   .today-panel,
@@ -1088,6 +1340,7 @@ tr:last-child td {
   .quick-grid,
   .stats-grid,
   .stats-grid.compact,
+  .badge-grid,
   .chart-grid,
   .rule-grid,
   .schedule-grid,
@@ -1168,5 +1421,18 @@ tr:last-child td {
   .weekly-bars {
     overflow-x: auto;
     grid-template-columns: repeat(8, 56px);
+  }
+
+  .mission-action {
+    align-content: start;
+  }
+
+  .heatmap-grid,
+  .heatmap-wrap.compact .heatmap-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .logger-game-strip {
+    display: grid;
   }
 }

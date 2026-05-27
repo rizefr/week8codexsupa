@@ -9,7 +9,6 @@ import {
   findExercise,
   isTrainingDay,
   numericValue,
-  repsForSet,
   workoutVolume,
 } from "./progress";
 
@@ -336,7 +335,11 @@ export function detectPRs(data: AppData): PRRecord[] {
         if (!completedSets.length) return;
 
         const weights = completedSets.map((set) => validWeight(set.weight)).filter(Boolean);
-        const totalReps = completedSets.reduce((sum, set) => sum + repsForSet(set, exercise), 0);
+        const totalReps = completedSets.reduce((sum, set) => {
+          if (exercise.kind === "timed") return sum;
+          if (exercise.unilateral) return sum + validReps(set.leftReps) + validReps(set.rightReps);
+          return sum + validReps(set.reps);
+        }, 0);
         const sessionVolume = exerciseVolume(exerciseLog);
         const timedBest = Math.max(0, ...completedSets.map((set) => validSeconds(set.seconds)));
 
@@ -571,21 +574,23 @@ export function calculateStreaks(data: AppData): StreakStats {
   const currentWeek = getCycleInfo(startDate, today).programWeek;
 
   return {
-    workout: dateStreak(completedTrainingDates, false),
+    workout: scheduledWorkoutStreak(completedTrainingDates, startDate, today),
     dailyCheckIn: forgivingDailyStreak(actionDates, startDate, today),
     weeklyCompletion: weeklyCompletionStreak(logs, currentWeek),
     comebackReady: actionDates.length ? daysSince(actionDates.at(-1)!, today) >= 2 : false,
   };
 }
 
-function dateStreak(dates: string[], allowGaps: boolean): { current: number; best: number } {
-  if (!dates.length) return { current: 0, best: 0 };
-  let current = 1;
-  let best = 1;
-  for (let index = 1; index < dates.length; index += 1) {
-    const gap = daysSince(dates[index - 1], dates[index]);
-    if (gap === 1 || (allowGaps && gap === 2)) current += 1;
-    else current = 1;
+function scheduledWorkoutStreak(completedDates: string[], startDate: string, today: string): { current: number; best: number } {
+  const completed = new Set(completedDates);
+  let current = 0;
+  let best = 0;
+  const totalDays = Math.max(0, daysSince(startDate, today));
+  for (let offset = 0; offset <= totalDays; offset += 1) {
+    const date = addDays(startDate, offset);
+    if (!isTrainingDay(dayKeyForDate(date))) continue;
+    if (completed.has(date)) current += 1;
+    else current = 0;
     best = Math.max(best, current);
   }
   return { current, best };

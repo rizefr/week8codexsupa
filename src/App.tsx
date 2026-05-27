@@ -28,6 +28,7 @@ import {
   BodyWeightLog,
   DayKey,
   ExerciseLog,
+  GamificationSettings,
   ProgramSettings,
   SetLog,
   WorkoutLog,
@@ -74,8 +75,20 @@ import {
   saveWorkoutLog,
   SaveResult,
 } from "./lib/storage";
+import {
+  Achievement,
+  buildTodayMission,
+  buildWorkoutRecap,
+  calculateGamification,
+  defaultGamificationSettings,
+  DailyActivity,
+  GamificationSummary,
+  getGamificationSettings,
+  loggingQualityForWorkout,
+  mergeGamificationSettings,
+} from "./lib/gamification";
 
-type Page = "dashboard" | "today" | "routine" | "logger" | "progress" | "weight" | "history" | "settings";
+type Page = "dashboard" | "today" | "routine" | "logger" | "recap" | "progress" | "weight" | "history" | "settings";
 type SaveState = "idle" | "saving" | "cloud" | "local" | "offline" | "syncIssue" | "notSignedIn";
 
 interface Route {
@@ -97,7 +110,7 @@ function parseRoute(): Route {
   const raw = window.location.hash.replace(/^#\/?/, "");
   if (!raw) return { page: "dashboard" };
   const [page, id] = raw.split("/");
-  const validPages: Page[] = ["dashboard", "today", "routine", "logger", "progress", "weight", "history", "settings"];
+  const validPages: Page[] = ["dashboard", "today", "routine", "logger", "recap", "progress", "weight", "history", "settings"];
   return validPages.includes(page as Page) ? { page: page as Page, id } : { page: "dashboard" };
 }
 
@@ -230,6 +243,11 @@ function App() {
   const [saveError, setSaveError] = useState("");
   const [cloudStatus, setCloudStatus] = useState(getCloudStatus());
   const dataRef = useRef(data);
+  const gamification = useMemo(() => calculateGamification(data), [data]);
+  const gamificationEnabled = gamification.settings.enabled;
+  const pendingBadgeUnlockIds = gamification.achievements
+    .filter((badge) => badge.unlocked && !gamification.settings.badgeUnlocks[badge.id])
+    .map((badge) => badge.id);
 
   useEffect(() => {
     dataRef.current = data;
@@ -326,6 +344,22 @@ function App() {
     });
   };
 
+  useEffect(() => {
+    if (loading || !gamificationEnabled || !pendingBadgeUnlockIds.length) return;
+    const current = getGamificationSettings(data.settings);
+    const nextUnlocks = { ...current.badgeUnlocks };
+    pendingBadgeUnlockIds.forEach((id) => {
+      nextUnlocks[id] = nextUnlocks[id] ?? new Date().toISOString();
+    });
+    persistSettings({
+      ...data.settings,
+      gamification: {
+        ...current,
+        badgeUnlocks: nextUnlocks,
+      },
+    });
+  }, [loading, gamificationEnabled, pendingBadgeUnlockIds.join("|")]);
+
   const persistWorkout = (log: WorkoutLog) => {
     setSaveState("saving");
     setSaveError("");
@@ -391,7 +425,8 @@ function App() {
     const settings = data.settings.startDate
       ? data.settings
       : { ...data.settings, startDate: date, status: "active" as const, updatedAt: new Date().toISOString() };
-    const existing = data.workoutLogs.find((item) => item.date === date && item.dayKey === dayKeyForDate(date));
+    const sameDayLogs = data.workoutLogs.filter((item) => item.date === date && item.dayKey === dayKeyForDate(date));
+    const existing = sameDayLogs.find((item) => item.status === "draft") ?? sameDayLogs.find((item) => item.status === "completed") ?? sameDayLogs[0];
     const log = existing ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings), data.workoutLogs);
     if (!data.settings.startDate) {
       persistSettings(settings);
@@ -400,6 +435,62 @@ function App() {
       persistWorkout(log);
     }
     navigate("logger", log.id);
+  };
+
+  const completeRestDay = (date = todayISO(), mode: NonNullable<WorkoutLog["restDay"]>["mode"] = "full-rest") => {
+    const settings = data.settings.startDate
+      ? data.settings
+      : { ...data.settings, startDate: date, status: "active" as const, updatedAt: new Date().toISOString() };
+    const dayKey = dayKeyForDate(date);
+    const existing = data.workoutLogs.find((item) => item.date === date && item.dayKey === dayKey);
+    const log = existing ?? getOrCreateLog(date, data.workoutLogs, settings);
+    const completed: WorkoutLog = {
+      ...log,
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      restDay: {
+        mode,
+        duration: mode === "easy-walk" ? log.restDay?.duration ?? "20" : log.restDay?.duration,
+        intensityNotes: log.restDay?.intensityNotes ?? (mode === "easy-walk" ? "Easy, conversational pace" : "No lifting. Recovery respected."),
+        completed: true,
+      },
+    };
+    if (!data.settings.startDate) persistSettings(settings);
+    persistWorkout(completed);
+    navigate("recap", completed.id);
+  };
+
+  const markRecapSeen = (workoutId: string) => {
+    const current = getGamificationSettings(data.settings);
+    if (current.seenRecaps.includes(workoutId)) return;
+    persistSettings({
+      ...data.settings,
+      gamification: {
+        ...current,
+        seenRecaps: [...current.seenRecaps, workoutId],
+      },
+    });
+  };
+
+  const repairGamification = () => {
+    const current = getGamificationSettings(data.settings);
+    const summary = calculateGamification(data);
+    const nextUnlocks = { ...current.badgeUnlocks };
+    summary.achievements.filter((badge) => badge.unlocked).forEach((badge) => {
+      const existing = nextUnlocks[badge.id];
+      const unlockedAt = badge.unlockedAt ?? todayISO();
+      if (!existing || unlockedAt < existing) nextUnlocks[badge.id] = unlockedAt;
+    });
+    persistSettings({
+      ...data.settings,
+      gamification: mergeGamificationSettings({ ...current, badgeUnlocks: nextUnlocks }, current, summary.settings),
+    });
+  };
+
+  const loadDevSampleData = () => {
+    const sample = createGamificationSampleData(data.settings);
+    setData(sample);
+    saveAppData(sample).then(applySaveResult);
   };
 
   const effectiveStart = effectiveProgramStartDate(data.settings, data.workoutLogs);
@@ -438,7 +529,17 @@ function App() {
           <LoadingScreen />
         ) : (
           <>
-            {route.page === "dashboard" && <Dashboard data={data} startWorkout={startWorkout} />}
+            {route.page === "dashboard" && (
+              <Dashboard
+                data={data}
+                gamification={gamification}
+                gamificationEnabled={gamificationEnabled}
+                cloudStatus={cloudStatus}
+                startWorkout={startWorkout}
+                completeRestDay={completeRestDay}
+                onSyncNow={retrySync}
+              />
+            )}
             {route.page === "today" && <TodayPage data={data} startWorkout={startWorkout} />}
             {route.page === "routine" && <RoutinePage />}
             {route.page === "logger" && (
@@ -448,9 +549,19 @@ function App() {
                 onSave={persistWorkout}
                 onDelete={removeWorkout}
                 startWorkout={startWorkout}
+                gamification={gamification}
               />
             )}
-            {route.page === "progress" && <ProgressPage data={data} />}
+            {route.page === "recap" && (
+              <RecapPage
+                logId={route.id}
+                data={data}
+                gamification={gamification}
+                markSeen={markRecapSeen}
+                startWorkout={startWorkout}
+              />
+            )}
+            {route.page === "progress" && <ProgressPage data={data} gamification={gamification} gamificationEnabled={gamificationEnabled} />}
             {route.page === "weight" && <WeightPage data={data} onSave={persistWeight} />}
             {route.page === "history" && <HistoryPage data={data} startWorkout={startWorkout} />}
             {route.page === "settings" && (
@@ -461,6 +572,8 @@ function App() {
                 data={data}
                 refreshCloudStatus={() => setCloudStatus(getCloudStatus())}
                 onSyncNow={retrySync}
+                onRepairGamification={repairGamification}
+                onLoadDevSample={loadDevSampleData}
                 onImport={(importedData) => {
                   const settings = { status: "active" as const, ...importedData.settings, updatedAt: new Date().toISOString() };
                   const startDate = effectiveProgramStartDate(settings, importedData.workoutLogs);
@@ -551,7 +664,23 @@ function LoadingScreen() {
   );
 }
 
-function Dashboard({ data, startWorkout }: { data: AppData; startWorkout: (date?: string) => void }) {
+function Dashboard({
+  data,
+  gamification,
+  gamificationEnabled,
+  cloudStatus,
+  startWorkout,
+  completeRestDay,
+  onSyncNow,
+}: {
+  data: AppData;
+  gamification: GamificationSummary;
+  gamificationEnabled: boolean;
+  cloudStatus: ReturnType<typeof getCloudStatus>;
+  startWorkout: (date?: string) => void;
+  completeRestDay: (date?: string, mode?: NonNullable<WorkoutLog["restDay"]>["mode"]) => void;
+  onSyncNow: () => void;
+}) {
   const today = todayISO();
   const dayKey = dayKeyForDate(today);
   const workout = workoutDays[dayKey];
@@ -576,27 +705,140 @@ function Dashboard({ data, startWorkout }: { data: AppData; startWorkout: (date?
         : recentVolume[0] === recentVolume[1]
           ? "Holding steady"
           : "Down from last session";
+  const mission = buildTodayMission(data, cloudStatus.pendingSync);
+  const draftLogs = data.workoutLogs.filter((log) => log.status === "draft").slice(0, 3);
+  const heatPreview = gamification.activities.slice(-35);
+  const handleMissionAction = () => {
+    if (mission.action === "sync") onSyncNow();
+    else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
+    else if (mission.action === "rest-checkin") completeRestDay(today, "full-rest");
+    else if (mission.action === "log-weight") navigate("weight");
+    else if (mission.workoutId) navigate("recap", mission.workoutId);
+  };
 
   return (
     <div className="page-grid">
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">Today</p>
-          <h2>{workout.title}</h2>
-          <p>{workout.subtitle}</p>
-          {workout.benchSetup && <span className="setup-chip">{workout.benchSetup}</span>}
-        </div>
-        <div className="hero-actions">
-          <button className="primary-action" onClick={() => startWorkout(today)}>
-            <Play size={18} />
-            Start today's workout
-          </button>
-          <button className="secondary-action" onClick={() => navigate("routine")}>
-            <BookOpen size={18} />
-            View full routine
-          </button>
-        </div>
-      </section>
+      {gamificationEnabled ? (
+        <>
+          <section className="mission-panel">
+            <div>
+              <p className="eyebrow">Today's Mission</p>
+              <h2>{mission.title}</h2>
+              <p>{mission.subtitle}</p>
+              <div className="mission-meta">
+                <span>Up to {mission.availableXP} XP available</span>
+                <span>{mission.focusCue}</span>
+              </div>
+            </div>
+            <div className="mission-action">
+              <span>Next Best Action</span>
+              <strong>{mission.nextBestAction}</strong>
+              <button className="primary-action" onClick={handleMissionAction}>
+                <Play size={18} />
+                {mission.nextBestAction}
+              </button>
+            </div>
+          </section>
+
+          {!!draftLogs.length && (
+            <section className="panel draft-panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Unfinished</p>
+                  <h3>Draft workouts saved locally</h3>
+                </div>
+              </div>
+              <div className="draft-list">
+                {draftLogs.map((log) => (
+                  <button key={log.id} className="draft-card" onClick={() => navigate("logger", log.id)}>
+                    <strong>{log.workoutTitle}</strong>
+                    <span>{formatDate(log.date)} · {completedSetCount(log)} sets logged</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="game-grid">
+            <article className="game-card level-card">
+              <p className="eyebrow">Level {gamification.level.level}</p>
+              <h3>{gamification.level.title}</h3>
+              <strong>{gamification.totalXP.toLocaleString()} XP</strong>
+              <div className="xp-bar"><i style={{ width: `${gamification.level.progressPercent}%` }} /></div>
+              <span>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</span>
+            </article>
+            <article className="game-card score-card">
+              <p className="eyebrow">Execution Score</p>
+              <h3>{gamification.executionScore.overall}/100</h3>
+              <strong>{gamification.executionScore.label}</strong>
+              <span>Quality score, separate from XP.</span>
+            </article>
+            <article className="game-card streak-card">
+              <p className="eyebrow">Streaks</p>
+              <h3>{gamification.streaks.dailyCheckIn.current} days</h3>
+              <span>Daily check-in · workout streak {gamification.streaks.workout.current}</span>
+              <span>Weekly completion streak {gamification.streaks.weeklyCompletion.current}</span>
+            </article>
+          </section>
+
+          <section className="panel heat-preview-panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Activity</p>
+                <h3>Last 5 weeks</h3>
+              </div>
+              <button className="secondary-action" onClick={() => navigate("progress")}>Full view</button>
+            </div>
+            <HeatMap activities={heatPreview} compact />
+          </section>
+
+          <section className="game-grid two">
+            <article className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Recent PRs</p>
+                  <h3>Wins</h3>
+                </div>
+              </div>
+              <MiniList
+                empty="No PRs yet. Complete a few sessions and clean improvements will show here."
+                items={gamification.recentPRs.map((pr) => `${formatDate(pr.date)} · ${pr.exerciseName}: ${pr.label}`)}
+              />
+            </article>
+            <article className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Badges</p>
+                  <h3>Recently unlocked</h3>
+                </div>
+              </div>
+              <MiniList
+                empty="Badges unlock from normal execution."
+                items={gamification.recentBadges.map((badge) => badge.title)}
+              />
+            </article>
+          </section>
+        </>
+      ) : (
+        <section className="hero-panel">
+          <div>
+            <p className="eyebrow">Today</p>
+            <h2>{workout.title}</h2>
+            <p>{workout.subtitle}</p>
+            {workout.benchSetup && <span className="setup-chip">{workout.benchSetup}</span>}
+          </div>
+          <div className="hero-actions">
+            <button className="primary-action" onClick={() => startWorkout(today)}>
+              <Play size={18} />
+              Start today's workout
+            </button>
+            <button className="secondary-action" onClick={() => navigate("routine")}>
+              <BookOpen size={18} />
+              View full routine
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="quick-grid">
         <button onClick={() => navigate("weight")}>
@@ -883,12 +1125,14 @@ function LoggerPage({
   onSave,
   onDelete,
   startWorkout,
+  gamification,
 }: {
   logId?: string;
   data: AppData;
   onSave: (log: WorkoutLog) => void;
   onDelete: (id: string) => void;
   startWorkout: (date?: string) => void;
+  gamification: GamificationSummary;
 }) {
   const log = data.workoutLogs.find((item) => item.id === logId);
   if (!log) {
@@ -906,11 +1150,17 @@ function LoggerPage({
 
   const workout = workoutDays[log.dayKey];
   const updateLog = (mutator: (current: WorkoutLog) => WorkoutLog) => onSave(mutator(log));
+  const loggingQuality = loggingQualityForWorkout(log);
+  const prCount = gamification.prs.filter((pr) => pr.workoutId === log.id).length;
+  const possibleXP = isTrainingDay(log.dayKey) ? (workout.cardio ? 185 : 170) : 40;
   const completeWorkout = () => {
     const completed = {
       ...log,
       status: "completed" as const,
       completedAt: new Date().toISOString(),
+      restDay: !isTrainingDay(log.dayKey)
+        ? log.restDay ?? { mode: "full-rest" as const, intensityNotes: "No lifting. Recovery respected.", completed: true }
+        : log.restDay,
       exerciseLogs: log.exerciseLogs.map((exerciseLog) => ({
         ...exerciseLog,
         completed:
@@ -920,6 +1170,7 @@ function LoggerPage({
       })),
     };
     onSave(completed);
+    navigate("recap", completed.id);
   };
 
   return (
@@ -948,6 +1199,14 @@ function LoggerPage({
         </div>
       </section>
 
+      {gamification.settings.enabled && (
+        <div className="logger-game-strip">
+          <span>Possible XP today: {possibleXP}</span>
+          <span>Logging quality: {loggingQuality}%</span>
+          {!!prCount && <span>New PR signals: {prCount}</span>}
+        </div>
+      )}
+
       {workout.benchSetup && <div className="guidance-card">{workout.benchSetup}</div>}
       {workout.restOptions && (
         <section className="panel">
@@ -964,6 +1223,41 @@ function LoggerPage({
                 <strong>{option.work}</strong>
               </div>
             ))}
+          </div>
+          <div className="settings-actions">
+            <button className="primary-action" type="button" onClick={() => {
+              updateLog((current) => ({
+                ...current,
+                status: "completed",
+                completedAt: new Date().toISOString(),
+                restDay: { mode: "full-rest", intensityNotes: "No lifting. Recovery respected.", completed: true },
+              }));
+              navigate("recap", log.id);
+            }}>
+              Full rest complete
+            </button>
+            <button className="secondary-action" type="button" onClick={() => {
+              updateLog((current) => ({
+                ...current,
+                status: "completed",
+                completedAt: new Date().toISOString(),
+                restDay: { mode: "easy-walk", duration: "20", intensityNotes: "Easy, conversational pace", completed: true },
+              }));
+              navigate("recap", log.id);
+            }}>
+              Easy walk done
+            </button>
+            <button className="secondary-action" type="button" onClick={() => {
+              updateLog((current) => ({
+                ...current,
+                status: "completed",
+                completedAt: new Date().toISOString(),
+                restDay: { mode: "recovery-checkin", intensityNotes: "Recovery check-in complete.", completed: true },
+              }));
+              navigate("recap", log.id);
+            }}>
+              Recovery check-in
+            </button>
           </div>
           {workout.rules?.map((rule) => <div key={rule} className="warning-line">{rule}</div>)}
         </section>
@@ -1000,6 +1294,99 @@ function LoggerPage({
           </button>
         </div>
       </section>
+    </div>
+  );
+}
+
+function RecapPage({
+  logId,
+  data,
+  gamification,
+  markSeen,
+  startWorkout,
+}: {
+  logId?: string;
+  data: AppData;
+  gamification: GamificationSummary;
+  markSeen: (id: string) => void;
+  startWorkout: (date?: string) => void;
+}) {
+  const recap = logId ? buildWorkoutRecap(logId, data) : null;
+  useEffect(() => {
+    if (recap?.log.id) markSeen(recap.log.id);
+  }, [recap?.log.id]);
+  if (!recap) {
+    return (
+      <section className="panel empty-state">
+        <h2>No recap found</h2>
+        <p>Open a completed workout from history or start today's workout.</p>
+        <button className="primary-action" onClick={() => startWorkout(todayISO())}>
+          <Play size={18} />
+          Start today
+        </button>
+      </section>
+    );
+  }
+  return (
+    <div className="content-stack">
+      <section className="recap-hero">
+        <p className="eyebrow">Workout Complete</p>
+        <h2>+{recap.xpEarned} XP</h2>
+        <p>{recap.log.workoutTitle} · {formatDate(recap.log.date, { weekday: "long", year: "numeric" })}</p>
+        <div className="xp-bar large"><i style={{ width: `${recap.level.progressPercent}%` }} /></div>
+        <span>Level {recap.level.level} · {recap.level.progressPercent}% to Level {recap.level.level + 1}</span>
+      </section>
+
+      <section className="stats-grid compact">
+        <StatCard icon={BarChart3} label="Workout Score" value={`${recap.workoutScore}/100`} detail="Completion, logging quality, and PR signals." />
+        <StatCard icon={Dumbbell} label="Exercises / sets" value={`${recap.exercisesCompleted} / ${recap.setsCompleted}`} detail="Exercises completed and sets checked off." />
+        <StatCard icon={CheckCircle2} label="Logging quality" value={`${recap.loggingQuality}%`} detail="Set fields completed with valid values." />
+        <StatCard icon={Flame} label="Streak status" value={recap.streakText} detail="Workout streak is separate from daily check-ins." />
+      </section>
+
+      <section className="game-grid two">
+        <article className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">PRs</p>
+              <h3>{recap.prs.length ? `${recap.prs.length} new signals` : "No new PRs"}</h3>
+            </div>
+          </div>
+          <MiniList empty="Good execution still counts. PRs show when performance beats prior valid logs." items={recap.prs.slice(0, 5).map((pr) => `${pr.exerciseName}: ${pr.label}`)} />
+        </article>
+        <article className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Badges</p>
+              <h3>{recap.badgesUnlocked.length ? "Unlocked" : "Progress saved"}</h3>
+            </div>
+          </div>
+          <MiniList empty="No new badge this time." items={recap.badgesUnlocked.map((badge) => badge.title)} />
+        </article>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Next time</p>
+            <h3>{recap.nextFocus}</h3>
+          </div>
+        </div>
+        <div className="recap-events">
+          {recap.xpEvents.map((event) => (
+            <span key={event.key}>{event.label} · +{event.xp} XP</span>
+          ))}
+        </div>
+        <div className="settings-actions">
+          <button className="primary-action" onClick={() => navigate("dashboard")}>Back to dashboard</button>
+          <button className="secondary-action" onClick={() => navigate("logger", recap.log.id)}>Edit workout</button>
+          <button className="secondary-action" onClick={() => navigate("progress")}>View progress</button>
+        </div>
+      </section>
+
+      {gamification.settings.showCelebrations && (
+        <div className="celebration-line">Clean execution logged. Keep the routine boring enough to repeat.</div>
+      )}
     </div>
   );
 }
@@ -1101,6 +1488,7 @@ function LogExerciseCard({
   }
 
   if (!exercise) return null;
+  const weightLabel = /db|dumbbell/i.test(exercise.name) ? "Weight (lb per DB)" : "Weight (lb)";
 
   return (
     <section className="panel log-card">
@@ -1156,7 +1544,7 @@ function LogExerciseCard({
             <div className="set-cell set-number"><span>Set</span><strong>{set.setNumber}</strong></div>
             <div className="set-cell"><span>Target</span><strong>{set.target}</strong></div>
             <label className="set-cell">
-              <span>Weight</span>
+              <span>{weightLabel}</span>
               <input value={set.weight ?? ""} onChange={(event) => updateSet(set.id, { weight: event.target.value })} inputMode="decimal" placeholder="lb" />
             </label>
             {exercise.kind === "timed" ? (
@@ -1229,7 +1617,7 @@ function NumberField({
   );
 }
 
-function ProgressPage({ data }: { data: AppData }) {
+function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppData; gamification: GamificationSummary; gamificationEnabled: boolean }) {
   const exerciseNames = useMemo(() => Array.from(new Set(allExercises.map((exercise) => exercise.name))).sort(), []);
   const [selectedExercise, setSelectedExercise] = useState(exerciseNames[0] ?? "");
   const [range, setRange] = useState<"week" | "cycle" | "last8" | "all">("cycle");
@@ -1281,6 +1669,54 @@ function ProgressPage({ data }: { data: AppData }) {
 
   return (
     <div className="content-stack">
+      {gamificationEnabled && (
+        <>
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Activity heat map</p>
+                <h2>Execution history</h2>
+              </div>
+            </div>
+            <HeatMap activities={gamification.activities} />
+          </section>
+
+          <section className="game-grid two">
+            <article className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">XP / Level</p>
+                  <h3>Level {gamification.level.level}: {gamification.level.title}</h3>
+                </div>
+              </div>
+              <strong className="big-number">{gamification.totalXP.toLocaleString()} XP</strong>
+              <div className="xp-bar"><i style={{ width: `${gamification.level.progressPercent}%` }} /></div>
+              <p>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</p>
+              <ChartPanel title="XP over time" values={gamification.activities.map((activity) => activity.xp).map((_, index, values) => values.slice(0, index + 1).reduce((sum, value) => sum + value, 0))} />
+            </article>
+            <article className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">PR timeline</p>
+                  <h3>Conservative records</h3>
+                </div>
+              </div>
+              <MiniList empty="No PRs yet." items={gamification.recentPRs.map((pr) => `${formatDate(pr.date)} · ${pr.exerciseName}: ${pr.label}`)} />
+            </article>
+          </section>
+
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Achievements</p>
+                <h2>Badges</h2>
+              </div>
+            </div>
+            <BadgeGrid achievements={gamification.achievements} />
+          </section>
+        </>
+      )}
+
       <section className="panel">
         <div className="section-heading">
           <div>
@@ -1439,6 +1875,76 @@ function ChartPanel({ title, values, stroke }: { title: string; values: number[]
       <h4>{title}</h4>
       <MiniChart values={values} label={title} stroke={stroke} />
     </article>
+  );
+}
+
+function MiniList({ items, empty }: { items: string[]; empty: string }) {
+  if (!items.length) return <div className="empty-state compact">{empty}</div>;
+  return (
+    <div className="mini-list">
+      {items.map((item) => (
+        <span key={item}>{item}</span>
+      ))}
+    </div>
+  );
+}
+
+function HeatMap({ activities, compact = false }: { activities: DailyActivity[]; compact?: boolean }) {
+  const [selected, setSelected] = useState<DailyActivity | null>(activities.at(-1) ?? null);
+  const visible = compact ? activities.slice(-35) : activities.slice(-84);
+  return (
+    <div className={classNames("heatmap-wrap", compact && "compact")}>
+      <div className="heatmap-grid">
+        {visible.map((day) => (
+          <button
+            key={day.date}
+            type="button"
+            className={classNames("heat-cell", day.state)}
+            aria-label={`${day.date}: ${day.summary}`}
+            title={`${day.date}: ${day.summary}`}
+            onClick={() => setSelected(day)}
+          />
+        ))}
+      </div>
+      <div className="heat-summary">
+        <strong>{selected ? formatDate(selected.date, { weekday: "long" }) : "Select a day"}</strong>
+        <span>{selected?.summary ?? "Tap a square to inspect activity."}</span>
+      </div>
+    </div>
+  );
+}
+
+function BadgeGrid({ achievements }: { achievements: Achievement[] }) {
+  const unlocked = achievements.filter((badge) => badge.unlocked);
+  const locked = achievements.filter((badge) => !badge.unlocked);
+  return (
+    <div className="badge-layout">
+      <div>
+        <p className="eyebrow">Recently unlocked</p>
+        <div className="badge-grid">
+          {(unlocked.slice(0, 6).length ? unlocked.slice(0, 6) : []).map((badge) => (
+            <article key={badge.id} className="badge-card unlocked">
+              <strong>{badge.title}</strong>
+              <span>{badge.description}</span>
+            </article>
+          ))}
+          {!unlocked.length && <div className="empty-state compact">Complete workouts to unlock badges.</div>}
+        </div>
+      </div>
+      <div>
+        <p className="eyebrow">Next badges</p>
+        <div className="badge-grid">
+          {locked.slice(0, 8).map((badge) => (
+            <article key={badge.id} className="badge-card">
+              <strong>{badge.title}</strong>
+              <span>{badge.description}</span>
+              <div className="xp-bar"><i style={{ width: `${Math.min(100, (badge.progressCurrent / Math.max(1, badge.progressTarget)) * 100)}%` }} /></div>
+              <small>{badge.progressCurrent}/{badge.progressTarget}</small>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1624,6 +2130,8 @@ function SettingsPage({
   data,
   refreshCloudStatus,
   onSyncNow,
+  onRepairGamification,
+  onLoadDevSample,
   onImport,
 }: {
   settings: ProgramSettings;
@@ -1632,6 +2140,8 @@ function SettingsPage({
   data: AppData;
   refreshCloudStatus: () => void;
   onSyncNow: () => void;
+  onRepairGamification: () => void;
+  onLoadDevSample: () => void;
   onImport: (data: AppData) => void;
 }) {
   const [startDate, setStartDate] = useState(settings.startDate);
@@ -1639,6 +2149,8 @@ function SettingsPage({
   const [cloudMessage, setCloudMessage] = useState("");
   const [cloudBusy, setCloudBusy] = useState(false);
   const localDataExists = data.workoutLogs.length > 0 || data.bodyWeights.length > 0;
+  const gamification = getGamificationSettings(settings);
+  const isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 
   const requestLink = async (event: FormEvent) => {
     event.preventDefault();
@@ -1754,6 +2266,54 @@ function SettingsPage({
       <section className="panel">
         <div className="section-heading">
           <div>
+            <p className="eyebrow">Gamification</p>
+            <h2>XP and motivation layer</h2>
+          </div>
+        </div>
+        <div className="settings-grid toggles">
+          <label className="complete-toggle">
+            <input
+              type="checkbox"
+              checked={gamification.enabled}
+              onChange={(event) => onSave({ ...settings, gamification: { ...gamification, enabled: event.target.checked } })}
+            />
+            Enabled
+          </label>
+          <label className="complete-toggle">
+            <input
+              type="checkbox"
+              checked={gamification.showCelebrations}
+              onChange={(event) => onSave({ ...settings, gamification: { ...gamification, showCelebrations: event.target.checked } })}
+            />
+            Show celebrations
+          </label>
+          <label className="complete-toggle">
+            <input
+              type="checkbox"
+              checked={gamification.compactMode}
+              onChange={(event) => onSave({ ...settings, gamification: { ...gamification, compactMode: event.target.checked } })}
+            />
+            Compact mode
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button className="secondary-action" type="button" onClick={() => {
+            onRepairGamification();
+            setCloudMessage("Gamification stats repaired from existing workout and body weight logs.");
+          }}>
+            Repair / Recalculate Gamification
+          </button>
+          {isLocalDev && (
+            <button className="secondary-action" type="button" onClick={onLoadDevSample}>
+              Load local sample gamification data
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
             <p className="eyebrow">Cloud sync</p>
             <h2>Phone-ready online saving</h2>
           </div>
@@ -1829,6 +2389,86 @@ function SettingsPage({
       </section>
     </div>
   );
+}
+
+function createGamificationSampleData(currentSettings: ProgramSettings): AppData {
+  const startDate = addDays(todayISO(), -34);
+  const settings: ProgramSettings = {
+    ...currentSettings,
+    startDate,
+    status: "active",
+    gamification: {
+      ...defaultGamificationSettings,
+      ...(currentSettings.gamification ?? {}),
+      enabled: true,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  const workoutLogs: WorkoutLog[] = [];
+  for (let offset = 0; offset <= 34; offset += 1) {
+    const date = addDays(startDate, offset);
+    const dayKey = dayKeyForDate(date);
+    const shouldSkip = offset === 11 || offset === 19;
+    if (isTrainingDay(dayKey) && !shouldSkip) {
+      const base = getOrCreateLog(date, workoutLogs, settings);
+      const completed: WorkoutLog = {
+        ...base,
+        status: "completed",
+        completedAt: new Date(fromDateForSample(date, 19)).toISOString(),
+        updatedAt: new Date(fromDateForSample(date, 19)).toISOString(),
+        exerciseLogs: base.exerciseLogs.map((exerciseLog, exerciseIndex) => {
+          const exercise = findExercise(exerciseLog.exerciseId);
+          return {
+            ...exerciseLog,
+            completed: true,
+            sets: exerciseLog.sets.map((set) => ({
+              ...set,
+              completed: true,
+              weight: exercise?.kind === "timed" ? "" : String(15 + exerciseIndex * 5 + Math.floor(offset / 7) * 2),
+              reps: exercise?.kind === "timed" || exercise?.unilateral ? set.reps : String(8 + (offset % 3)),
+              leftReps: exercise?.unilateral ? String(8 + (offset % 3)) : set.leftReps,
+              rightReps: exercise?.unilateral ? String(8 + (offset % 3)) : set.rightReps,
+              seconds: exercise?.kind === "timed" ? String(25 + (offset % 4) * 3) : set.seconds,
+              rir: "1",
+            })),
+            cardio: exerciseLog.cardio ? { ...exerciseLog.cardio, duration: "12", intensityNotes: "Easy, conversational pace", completed: true } : exerciseLog.cardio,
+          };
+        }),
+      };
+      workoutLogs.unshift(completed);
+    } else if (!isTrainingDay(dayKey) && offset % 3 !== 0) {
+      workoutLogs.unshift({
+        id: createId("workout"),
+        date,
+        week: getCycleInfo(startDate, date).programWeek,
+        cycle: getCycleInfo(startDate, date).cycle,
+        weekInCycle: getCycleInfo(startDate, date).weekInCycle,
+        dayKey,
+        workoutTitle: workoutDays[dayKey].title,
+        status: "completed",
+        startedAt: new Date(fromDateForSample(date, 9)).toISOString(),
+        completedAt: new Date(fromDateForSample(date, 9)).toISOString(),
+        updatedAt: new Date(fromDateForSample(date, 9)).toISOString(),
+        restDay: { mode: "recovery-checkin", intensityNotes: "Recovery respected.", completed: true },
+        exerciseLogs: [],
+      });
+    }
+  }
+  const bodyWeights: BodyWeightLog[] = Array.from({ length: 10 }, (_, index) => ({
+    id: createId("weight"),
+    date: addDays(startDate, index * 3),
+    weight: 142 + index * 0.2,
+    note: "Sample weigh-in",
+    updatedAt: new Date().toISOString(),
+  }));
+  return { settings, workoutLogs, bodyWeights };
+}
+
+function fromDateForSample(date: string, hour: number): Date {
+  const [year, month, day] = date.split("-").map(Number);
+  const value = new Date(year, month - 1, day);
+  value.setHours(hour, 0, 0, 0);
+  return value;
 }
 
 export default App;
