@@ -80,6 +80,16 @@ export interface ProgramSettings {
   pausedAt?: string;
   completedAt?: string;
   updatedAt?: string;
+  gamification?: GamificationSettings;
+}
+
+export interface GamificationSettings {
+  enabled: boolean;
+  showCelebrations: boolean;
+  compactMode: boolean;
+  version: number;
+  badgeUnlocks: Record<string, string>;
+  seenRecaps: string[];
 }
 
 export interface SetLog {
@@ -124,6 +134,12 @@ export interface WorkoutLog {
   completedAt?: string;
   updatedAt?: string;
   notes?: string;
+  restDay?: {
+    mode: "full-rest" | "easy-walk" | "recovery-checkin";
+    duration?: string;
+    intensityNotes?: string;
+    completed: boolean;
+  };
   exerciseLogs: ExerciseLog[];
 }
 

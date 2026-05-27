@@ -13,6 +13,7 @@ import {
   saveCloudWorkoutLog,
 } from "./cloud";
 import { getCycleInfo, todayISO } from "./date";
+import { defaultGamificationSettings, getGamificationSettings, mergeProgramSettingsGamification } from "./gamification";
 
 const DB_NAME = "chad-aesthetic-dashboard";
 const DB_VERSION = 1;
@@ -22,6 +23,7 @@ const FALLBACK_KEY = "chad-aesthetic-dashboard:fallback";
 const defaultSettings: ProgramSettings = {
   startDate: "",
   status: "active",
+  gamification: defaultGamificationSettings,
 };
 
 type StoreName = "settings" | "workoutLogs" | "bodyWeights";
@@ -130,13 +132,21 @@ function loadFallback(): AppData {
   try {
     const parsed = JSON.parse(raw) as AppData;
     return {
-      settings: parsed.settings ?? defaultSettings,
+      settings: normalizeSettings(parsed.settings),
       workoutLogs: parsed.workoutLogs ?? [],
       bodyWeights: parsed.bodyWeights ?? [],
     };
   } catch {
     return { settings: defaultSettings, workoutLogs: [], bodyWeights: [] };
   }
+}
+
+function normalizeSettings(settings?: ProgramSettings): ProgramSettings {
+  return {
+    ...defaultSettings,
+    ...(settings ?? {}),
+    gamification: getGamificationSettings(settings ?? defaultSettings),
+  };
 }
 
 function saveFallback(data: AppData): void {
@@ -161,9 +171,11 @@ function mergeLogsById<T extends { id: string }>(local: T[], remote: T[]): T[] {
 }
 
 function normalizeProgramFields(data: AppData): AppData {
-  const startDate = data.settings.startDate || [...data.workoutLogs].sort((a, b) => a.date.localeCompare(b.date))[0]?.date || todayISO();
+  const settings = normalizeSettings(data.settings);
+  const startDate = settings.startDate || [...data.workoutLogs].sort((a, b) => a.date.localeCompare(b.date))[0]?.date || todayISO();
   return {
     ...data,
+    settings,
     workoutLogs: data.workoutLogs.map((log) => {
       const cycleInfo = getCycleInfo(startDate, log.date);
       return { ...log, week: cycleInfo.programWeek, cycle: cycleInfo.cycle, weekInCycle: cycleInfo.weekInCycle };
@@ -205,7 +217,7 @@ async function loadLocalData(): Promise<AppData> {
     ]);
     const settings = settingsRows.find((row) => row.key === SETTINGS_KEY)?.value ?? defaultSettings;
     return {
-      settings,
+      settings: normalizeSettings(settings),
       workoutLogs: workoutLogs.sort((a, b) => b.date.localeCompare(a.date)),
       bodyWeights: bodyWeights.sort((a, b) => a.date.localeCompare(b.date)),
     };
@@ -220,10 +232,11 @@ export async function loadAppData(): Promise<AppData> {
   const cloudResult = await loadCloudData();
   if (!cloudResult) return localData;
   const deletedIds = new Set(getQueuedCloudDeleteIds());
-  const cloudSettings = cloudResult.data.settings;
-  const settings = cloudResult.hasSettings && (cloudSettings.startDate || !localData.settings.startDate)
+  const cloudSettings = normalizeSettings(cloudResult.data.settings);
+  const selectedSettings = cloudResult.hasSettings && (cloudSettings.startDate || !localData.settings.startDate)
     ? cloudSettings
     : localData.settings;
+  const settings = mergeProgramSettingsGamification(selectedSettings, localData.settings, cloudSettings);
   const merged = {
     settings,
     workoutLogs: mergeLogsById(localData.workoutLogs, cloudResult.data.workoutLogs)
