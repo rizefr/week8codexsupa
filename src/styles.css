@@ -1250,7 +1250,11 @@ tr:last-child td {
   }
 
   .mobile-nav-shell {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 22;
     display: block;
+    pointer-events: none;
   }
 
   .bottom-nav {
@@ -1266,6 +1270,7 @@ tr:last-child td {
     border-top: 1px solid var(--line);
     background: rgba(7, 11, 18, 0.92);
     backdrop-filter: blur(18px);
+    pointer-events: auto;
   }
 
   .mobile-more-popover {
@@ -1285,6 +1290,7 @@ tr:last-child td {
     background: rgba(11, 18, 30, 0.98);
     box-shadow: var(--shadow);
     backdrop-filter: blur(18px);
+    pointer-events: auto;
   }
 
   .mobile-more-popover button {
@@ -1375,6 +1381,20 @@ tr:last-child td {
   .history-card {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .app-shell,
+  .main,
+  .page-grid,
+  .content-stack,
+  .panel,
+  .top-bar,
+  .game-grid,
+  .game-grid.two,
+  .chart-grid,
+  .responsive-table {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .top-bar .primary-action,
