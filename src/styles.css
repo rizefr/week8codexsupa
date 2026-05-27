@@ -49,6 +49,7 @@ select {
 
 button {
   color: inherit;
+  touch-action: manipulation;
 }
 
 button,
@@ -480,20 +481,24 @@ input[type="checkbox"] {
 }
 
 .heatmap-grid {
+  --heat-cell: clamp(14px, 4.2vw, 20px);
   display: grid;
-  grid-template-columns: repeat(14, minmax(0, 1fr));
+  grid-template-columns: repeat(14, var(--heat-cell));
+  grid-auto-rows: var(--heat-cell);
+  justify-content: start;
   gap: 0.28rem;
   max-width: 100%;
+  contain: layout paint;
 }
 
 .heatmap-wrap.compact .heatmap-grid {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(7, var(--heat-cell));
 }
 
 .heat-cell {
-  width: 100%;
-  aspect-ratio: 1;
-  min-height: 14px;
+  width: var(--heat-cell);
+  height: var(--heat-cell);
+  min-height: var(--heat-cell);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.055);
@@ -1219,6 +1224,10 @@ tr:last-child td {
   display: none;
 }
 
+.mobile-nav-shell {
+  display: none;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1236,6 +1245,12 @@ tr:last-child td {
 
   .main {
     padding-inline: 1rem;
+    padding-top: env(safe-area-inset-top);
+    overscroll-behavior: contain;
+  }
+
+  .mobile-nav-shell {
+    display: block;
   }
 
   .bottom-nav {
@@ -1247,21 +1262,61 @@ tr:last-child td {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0.2rem;
-    padding: 0.45rem;
+    padding: 0.45rem 0.45rem calc(0.45rem + env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
     background: rgba(7, 11, 18, 0.92);
     backdrop-filter: blur(18px);
+  }
+
+  .mobile-more-popover {
+    position: fixed;
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: calc(4.85rem + env(safe-area-inset-bottom));
+    z-index: 22;
+    display: grid;
+    gap: 0.45rem;
+    max-height: calc(70vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 0.65rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(11, 18, 30, 0.98);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px);
+  }
+
+  .mobile-more-popover button {
+    min-height: 48px;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--muted-strong);
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    justify-content: flex-start;
+    padding: 0.75rem 0.85rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .mobile-more-popover button.active,
+  .mobile-more-popover button:hover {
+    border-color: rgba(61, 214, 163, 0.22);
+    background: rgba(61, 214, 163, 0.1);
+    color: var(--text);
   }
 
   .mobile-sync {
     position: fixed;
     left: 0.75rem;
     right: 0.75rem;
-    bottom: 4.3rem;
+    bottom: calc(4.35rem + env(safe-area-inset-bottom));
     z-index: 21;
     display: flex;
     justify-content: center;
-    min-height: 38px;
+    min-height: 44px;
     border: 1px solid var(--line);
     background: rgba(7, 11, 18, 0.92);
     border-radius: 8px;
@@ -1272,14 +1327,17 @@ tr:last-child td {
     border: 0;
     background: transparent;
     color: var(--muted);
-    min-height: 54px;
+    min-height: 56px;
+    min-width: 44px;
     display: grid;
     place-items: center;
     gap: 0.1rem;
     font-size: 0.72rem;
+    cursor: pointer;
   }
 
-  .bottom-nav button.active {
+  .bottom-nav button.active,
+  .bottom-nav button.open {
     color: var(--green);
   }
 
@@ -1301,7 +1359,8 @@ tr:last-child td {
 
 @media (max-width: 760px) {
   .main {
-    padding: 0.75rem 0.75rem 6.5rem;
+    padding: calc(0.75rem + env(safe-area-inset-top)) 0.75rem calc(7.25rem + env(safe-area-inset-bottom));
+    scroll-padding-bottom: calc(8rem + env(safe-area-inset-bottom));
   }
 
   .top-bar,
@@ -1329,6 +1388,7 @@ tr:last-child td {
   .primary-action,
   .secondary-action {
     width: 100%;
+    min-height: 48px;
   }
 
   .hero-panel {
@@ -1389,6 +1449,15 @@ tr:last-child td {
     gap: 0.8rem;
   }
 
+  .logger-page {
+    padding-bottom: calc(8.75rem + env(safe-area-inset-bottom));
+    scroll-padding-bottom: calc(9rem + env(safe-area-inset-bottom));
+  }
+
+  .recap-hero {
+    padding-top: calc(1rem + env(safe-area-inset-top));
+  }
+
   .set-row,
   .set-row:has(.set-cell:nth-child(7)) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1421,6 +1490,7 @@ tr:last-child td {
   .weekly-bars {
     overflow-x: auto;
     grid-template-columns: repeat(8, 56px);
+    overscroll-behavior-x: contain;
   }
 
   .mission-action {
@@ -1429,10 +1499,21 @@ tr:last-child td {
 
   .heatmap-grid,
   .heatmap-wrap.compact .heatmap-grid {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    --heat-cell: clamp(14px, 4.5vw, 18px);
   }
 
   .logger-game-strip {
     display: grid;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
   }
 }

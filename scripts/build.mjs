@@ -98,7 +98,7 @@ async function writeIndex() {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#090f18" />
-    <title>8-Week Aesthetic Training Dashboard</title>
+    <title>Eli’s Cycle Tracker</title>
     <link rel="stylesheet" href="./src/styles.css" />
     <script src="./config.js"></script>
     <script type="importmap">

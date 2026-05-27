@@ -12,6 +12,7 @@ import {
   History,
   Home,
   LineChart,
+  MoreHorizontal,
   Play,
   Plus,
   Save,
@@ -105,6 +106,21 @@ const navItems: { page: Page; label: string; icon: typeof Home }[] = [
   { page: "history", label: "History", icon: History },
   { page: "settings", label: "Settings", icon: Settings },
 ];
+
+const mobilePrimaryItems: { page: Page; label: string; icon: typeof Home }[] = [
+  { page: "dashboard", label: "Dashboard", icon: Home },
+  { page: "today", label: "Today", icon: Play },
+  { page: "progress", label: "Progress", icon: LineChart },
+  { page: "weight", label: "Weight", icon: Weight },
+];
+
+const mobileMoreItems: { page: Page; label: string; icon: typeof Home }[] = [
+  { page: "routine", label: "Routine", icon: BookOpen },
+  { page: "history", label: "History", icon: History },
+  { page: "settings", label: "Settings", icon: Settings },
+];
+
+const mobileMorePages = mobileMoreItems.map((item) => item.page);
 
 function parseRoute(): Route {
   const raw = window.location.hash.replace(/^#\/?/, "");
@@ -242,7 +258,9 @@ function App() {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState("");
   const [cloudStatus, setCloudStatus] = useState(getCloudStatus());
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const dataRef = useRef(data);
+  const mobileMoreRef = useRef<HTMLDivElement>(null);
   const gamification = useMemo(() => calculateGamification(data), [data]);
   const gamificationEnabled = gamification.settings.enabled;
   const pendingBadgeUnlockIds = gamification.achievements
@@ -254,10 +272,45 @@ function App() {
   }, [data]);
 
   useEffect(() => {
-    const onHashChange = () => setRoute(parseRoute());
+    const onHashChange = () => {
+      setRoute(parseRoute());
+      setMobileMoreOpen(false);
+    };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+
+  useEffect(() => {
+    setMobileMoreOpen(false);
+  }, [route.page, route.id]);
+
+  useEffect(() => {
+    if (!mobileMoreOpen) return;
+    const close = () => setMobileMoreOpen(false);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!mobileMoreRef.current?.contains(event.target as Node)) close();
+    };
+    const onResize = () => {
+      if (window.innerWidth > 1120) close();
+    };
+    const scrollOptions = { passive: true, capture: true };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("scroll", close, scrollOptions);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("hashchange", close);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("scroll", close, scrollOptions);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("hashchange", close);
+    };
+  }, [mobileMoreOpen]);
 
   useEffect(() => {
     loadAppData()
@@ -292,6 +345,27 @@ function App() {
     return () => {
       window.removeEventListener("online", updateOnlineStatus);
       window.removeEventListener("offline", updateOnlineStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    let scrollTimer: number | undefined;
+    const onFocusIn = (event: FocusEvent) => {
+      if (!window.matchMedia("(max-width: 760px)").matches) return;
+      const target = event.target as HTMLElement | null;
+      if (!target?.matches("input, textarea, select")) return;
+      const row = target.closest(".set-row, .log-card, .sticky-complete") as HTMLElement | null;
+      if (!row) return;
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        row.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+      }, 90);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      document.removeEventListener("focusin", onFocusIn);
     };
   }, []);
 
@@ -504,8 +578,8 @@ function App() {
             <Flame size={20} />
           </span>
           <span>
-            <strong>Chad A</strong>
-            <small>Cycle tracker</small>
+            <strong>Eli’s Cycle Tracker</strong>
+            <small>Training cycle</small>
           </span>
         </button>
         <nav>
@@ -606,18 +680,50 @@ function App() {
         mobile
       />
 
-      <nav className="bottom-nav">
-        {navItems.slice(0, 5).map((item) => (
+      <div className="mobile-nav-shell" ref={mobileMoreRef}>
+        {mobileMoreOpen && (
+          <div className="mobile-more-popover" id="mobile-more-menu" role="menu" aria-label="More navigation">
+            {mobileMoreItems.map((item) => (
+              <button
+                key={item.page}
+                type="button"
+                role="menuitem"
+                className={classNames(route.page === item.page && "active")}
+                onClick={() => {
+                  setMobileMoreOpen(false);
+                  navigate(item.page);
+                }}
+              >
+                <item.icon size={19} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <nav className="bottom-nav" aria-label="Mobile navigation">
+          {mobilePrimaryItems.map((item) => (
+            <button
+              key={item.page}
+              type="button"
+              className={classNames(route.page === item.page && "active")}
+              onClick={() => navigate(item.page)}
+            >
+              <item.icon size={18} />
+              <span>{item.label}</span>
+            </button>
+          ))}
           <button
-            key={item.page}
-            className={classNames(route.page === item.page && "active")}
-            onClick={() => navigate(item.page)}
+            type="button"
+            className={classNames((mobileMorePages.includes(route.page) || mobileMoreOpen) && "active", mobileMoreOpen && "open")}
+            aria-controls="mobile-more-menu"
+            aria-expanded={mobileMoreOpen}
+            onClick={() => setMobileMoreOpen((open) => !open)}
           >
-            <item.icon size={18} />
-            <span>{item.label}</span>
+            <MoreHorizontal size={18} />
+            <span>More</span>
           </button>
-        ))}
-      </nav>
+        </nav>
+      </div>
     </div>
   );
 }
@@ -958,8 +1064,8 @@ function RoutinePage() {
       <section className="panel routine-header">
         <div>
           <p className="eyebrow">Source of truth</p>
-          <h2>Final Routine A by Chad</h2>
-          <p>Corrected 8-week home-gym aesthetic hypertrophy routine. The tracker repeats this cycle until you archive or reset it.</p>
+          <h2>Eli’s Aesthetic Hypertrophy Cycle</h2>
+          <p>8-week cycle structure that repeats until you archive or reset it.</p>
         </div>
         <label className="search-box">
           <Search size={18} />
