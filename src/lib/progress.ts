@@ -2,7 +2,9 @@ import {
   BodyWeightLog,
   DayKey,
   Exercise,
+  ExerciseTrackingType,
   ExerciseLog,
+  ProgramPhase,
   ProgramSettings,
   SetLog,
   WorkoutLog,
@@ -18,6 +20,82 @@ export function createId(prefix: string): string {
 
 export function findExercise(exerciseId: string): Exercise | undefined {
   return allExercises.find((exercise) => exercise.id === exerciseId);
+}
+
+export function programPhaseFromWeekInCycle(weekInCycle = 1): ProgramPhase {
+  const normalized = ((Math.max(1, weekInCycle) - 1) % 8) + 1;
+  if (normalized <= 2) return "setup";
+  if (normalized <= 6) return "growth";
+  return "push";
+}
+
+export function trackingTypeForExercise(exercise?: Exercise): ExerciseTrackingType {
+  if (!exercise) return "weighted-reps";
+  if (exercise.trackingType) return exercise.trackingType;
+  if (exercise.kind === "timed") return "timed";
+  if (exercise.kind === "cardio") return "cardio";
+  if (exercise.kind === "rest") return "rest-checkin";
+  if (/assisted pull-up|assisted dip/i.test(exercise.name)) return "assistance-reps";
+  if (/walkout|reverse crunch|dead bug|plank|hollow|push-up/i.test(exercise.name)) return "bodyweight-reps";
+  return "weighted-reps";
+}
+
+export function targetRIRForExercise(exercise: Exercise, weekInCycle = 1): string {
+  const phase = programPhaseFromWeekInCycle(weekInCycle);
+  const fallback = trackingTypeForExercise(exercise) === "timed" || trackingTypeForExercise(exercise) === "bodyweight-reps"
+    ? "Stop when control breaks"
+    : "1-2";
+  return exercise.targetRIRByPhase?.[phase] ?? fallback;
+}
+
+export function targetRIRForSet(exercise: Exercise, weekInCycle: number | undefined, setNumber: number): string {
+  const target = targetRIRForExercise(exercise, weekInCycle);
+  if (!target.includes(";")) return target;
+  const [base, final] = target.split(";").map((value) => value.trim());
+  return exercise.sets && setNumber === exercise.sets ? final.replace(/^final set\s*/i, "") : base;
+}
+
+export function loadLabelForExercise(exercise?: Exercise): string {
+  if (!exercise) return "Weight (lb)";
+  if (exercise.loadLabel) return exercise.loadLabel;
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "assistance-reps") return "Assistance (lb)";
+  if (/db|dumbbell/i.test(exercise.name)) return "Weight (lb per DB)";
+  return "Weight (lb)";
+}
+
+export function shouldShowLoadInput(exercise?: Exercise): boolean {
+  const trackingType = trackingTypeForExercise(exercise);
+  return trackingType === "weighted-reps" || trackingType === "assistance-reps";
+}
+
+export function loadRequiredForExercise(exercise?: Exercise): boolean {
+  return shouldShowLoadInput(exercise) && exercise?.loadRequired !== false;
+}
+
+export function loadIsAssistance(exercise?: Exercise): boolean {
+  return trackingTypeForExercise(exercise) === "assistance-reps";
+}
+
+export function validLoadValue(value?: string): number {
+  const parsed = numericValue(value);
+  return parsed > 0 && parsed <= 500 ? parsed : 0;
+}
+
+export function validRepValue(value?: string): number {
+  const parsed = numericValue(value);
+  return parsed > 0 && parsed <= 100 ? parsed : 0;
+}
+
+export function validSecondValue(value?: string): number {
+  const parsed = numericValue(value);
+  return parsed > 0 && parsed <= 600 ? parsed : 0;
+}
+
+export function validRirValue(value?: string): boolean {
+  if (!value) return false;
+  const parsed = numericValue(value);
+  return parsed >= 0 && parsed <= 10;
 }
 
 export function exerciseNameForId(exerciseId: string): string {
@@ -39,9 +117,10 @@ export function createSetLogs(exercise: Exercise): SetLog[] {
   }));
 }
 
-export function createWorkoutLog(date: string, settings: ProgramSettings): WorkoutLog {
-  const dayKey = dayKeyForDate(date);
-  const workout = getWorkoutByKey(dayKey);
+export function createWorkoutLog(date: string, settings: ProgramSettings, performedDayKey: DayKey = dayKeyForDate(date)): WorkoutLog {
+  const scheduledDayKey = dayKeyForDate(date);
+  const dayKey = performedDayKey;
+  const workout = getWorkoutByKey(performedDayKey);
   const effectiveStartDate = settings.startDate || date;
   const cycleInfo = getCycleInfo(effectiveStartDate, date);
   const exerciseLogs: ExerciseLog[] = [
@@ -72,6 +151,9 @@ export function createWorkoutLog(date: string, settings: ProgramSettings): Worko
     cycle: cycleInfo.cycle,
     weekInCycle: cycleInfo.weekInCycle,
     dayKey,
+    scheduledDayKey,
+    performedDayKey,
+    isScheduleOverride: performedDayKey !== scheduledDayKey,
     workoutTitle: workout.title,
     status: "draft",
     startedAt: new Date().toISOString(),
@@ -80,9 +162,16 @@ export function createWorkoutLog(date: string, settings: ProgramSettings): Worko
   };
 }
 
-export function getOrCreateLog(date: string, logs: WorkoutLog[], settings: ProgramSettings): WorkoutLog {
-  const dayKey = dayKeyForDate(date);
-  return logs.find((log) => log.date === date && log.dayKey === dayKey) ?? createWorkoutLog(date, settings);
+export function getOrCreateLog(date: string, logs: WorkoutLog[], settings: ProgramSettings, performedDayKey?: DayKey): WorkoutLog {
+  if (performedDayKey) {
+    return logs.find((log) => log.date === date && log.dayKey === performedDayKey) ?? createWorkoutLog(date, settings, performedDayKey);
+  }
+  return (
+    logs.find((log) => log.date === date && log.status === "draft") ??
+    logs.find((log) => log.date === date && log.status === "completed") ??
+    logs.find((log) => log.date === date) ??
+    createWorkoutLog(date, settings)
+  );
 }
 
 export function isTrainingDay(dayKey: DayKey): boolean {
@@ -96,17 +185,17 @@ export function numericValue(value?: string): number {
 }
 
 export function repsForSet(set: SetLog, exercise?: Exercise): number {
-  if (exercise?.kind === "timed") return numericValue(set.seconds);
+  if (trackingTypeForExercise(exercise) === "timed") return validSecondValue(set.seconds);
   if (exercise?.unilateral) {
-    return numericValue(set.leftReps) + numericValue(set.rightReps);
+    return validRepValue(set.leftReps) + validRepValue(set.rightReps);
   }
-  return numericValue(set.reps);
+  return validRepValue(set.reps);
 }
 
 export function setVolume(set: SetLog, exercise?: Exercise): number {
-  if (exercise?.kind !== "strength") return 0;
-  const weight = numericValue(set.weight);
-  return weight * repsForSet(set, exercise);
+  if (trackingTypeForExercise(exercise) !== "weighted-reps") return 0;
+  const weight = validLoadValue(set.weight);
+  return weight * repsForSet(set, exercise) * (exercise?.volumeMultiplier ?? 1);
 }
 
 export function exerciseVolume(log: ExerciseLog): number {
@@ -208,6 +297,7 @@ export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]
       if (!exercise) return exerciseLog;
       const previous = previousExercisePerformance(logs, log.date, exercise.name);
       if (!previous) return exerciseLog;
+      if (!shouldShowLoadInput(exercise)) return exerciseLog;
       return {
         ...exerciseLog,
         sets: exerciseLog.sets.map((set, index) => ({
@@ -221,14 +311,16 @@ export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]
 
 export function previousSetSummary(exerciseLog: ExerciseLog, exercise?: Exercise): string {
   if (!exerciseLog.sets.length) return "";
+  const showLoad = shouldShowLoadInput(exercise);
+  const loadLabel = loadIsAssistance(exercise) ? "assist" : "lb";
   return exerciseLog.sets
     .map((set) => {
-      const performance = exercise?.kind === "timed"
+      const performance = trackingTypeForExercise(exercise) === "timed"
         ? `${set.seconds || "-"} sec`
         : exercise?.unilateral
           ? `${set.leftReps || "-"}/${set.rightReps || "-"} reps`
           : `${set.reps || "-"} reps`;
-      return `S${set.setNumber}: ${set.weight || "-"} lb x ${performance}`;
+      return showLoad ? `S${set.setNumber}: ${set.weight || "-"} ${loadLabel} x ${performance}` : `S${set.setNumber}: ${performance}`;
     })
     .join(" · ");
 }
@@ -281,7 +373,7 @@ export function progressionAdvice(log: ExerciseLog): string {
   if (containsPainOrRegression(text)) {
     return "Hold steady or reduce range/volume. Pain or regression language was logged.";
   }
-  if (exercise.kind === "timed") {
+  if (trackingTypeForExercise(exercise) === "timed") {
     return "Add seconds only while bracing stays clean. Stop when control breaks.";
   }
   const top = topRepTarget(exercise.reps);
@@ -294,8 +386,11 @@ export function progressionAdvice(log: ExerciseLog): string {
     }
     return numericValue(set.reps) >= top;
   });
-  if (hitTop) return "Add weight next time if form, range, sleep, and joints were solid.";
-  return "Keep the same weight and add clean reps next time.";
+  const trackingType = trackingTypeForExercise(exercise);
+  if (hitTop && trackingType === "assistance-reps") return "Reduce assistance next time only if reps and form stayed solid.";
+  if (hitTop && trackingType === "weighted-reps") return "Add weight next time if form, range, sleep, and joints were solid.";
+  if (hitTop) return "Make the reps cleaner or add a small rep target next time; do not add load unless the routine calls for it.";
+  return trackingType === "assistance-reps" ? "Keep assistance the same and add clean reps next time." : "Keep the same load/variation and add clean reps next time.";
 }
 
 export function exerciseSessions(logs: WorkoutLog[], exerciseName: string) {
@@ -320,9 +415,62 @@ export function compareLastTwoExerciseSessions(logs: WorkoutLog[], exerciseName:
   if (sessions.length < 2) return "New";
   const previous = sessions.at(-2)!;
   const current = sessions.at(-1)!;
-  const previousVolume = exerciseVolume(previous.exerciseLog);
-  const currentVolume = exerciseVolume(current.exerciseLog);
-  if (currentVolume > previousVolume) return "Improved";
-  if (currentVolume < previousVolume) return "Regressed";
+  const trackingType = trackingTypeForExercise(current.exercise);
+  const previousMetric = progressMetricValue(previous.exerciseLog, previous.exercise);
+  const currentMetric = progressMetricValue(current.exerciseLog, current.exercise);
+  if (trackingType === "assistance-reps") {
+    const previousAssist = bestAssistance(previous.exerciseLog);
+    const currentAssist = bestAssistance(current.exerciseLog);
+    if (currentMetric > previousMetric || (currentMetric >= previousMetric && currentAssist > 0 && previousAssist > 0 && currentAssist < previousAssist)) return "Improved";
+    if (currentMetric < previousMetric) return "Regressed";
+    return "Held steady";
+  }
+  if (currentMetric > previousMetric) return "Improved";
+  if (currentMetric < previousMetric) return "Regressed";
   return "Held steady";
+}
+
+export function totalRepsForExerciseLog(log: ExerciseLog, exercise?: Exercise): number {
+  return log.sets.filter((set) => set.completed).reduce((sum, set) => sum + (trackingTypeForExercise(exercise) === "timed" ? 0 : repsForSet(set, exercise)), 0);
+}
+
+export function totalSecondsForExerciseLog(log: ExerciseLog): number {
+  return log.sets.filter((set) => set.completed).reduce((sum, set) => sum + validSecondValue(set.seconds), 0);
+}
+
+export function bestSetReps(log: ExerciseLog, exercise?: Exercise): number {
+  return Math.max(0, ...log.sets.filter((set) => set.completed).map((set) => {
+    if (exercise?.unilateral) return Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps));
+    return validRepValue(set.reps);
+  }));
+}
+
+export function bestTimedSet(log: ExerciseLog): number {
+  return Math.max(0, ...log.sets.filter((set) => set.completed).map((set) => validSecondValue(set.seconds)));
+}
+
+export function bestAssistance(log: ExerciseLog): number {
+  const values = log.sets.filter((set) => set.completed).map((set) => validLoadValue(set.weight)).filter(Boolean);
+  return values.length ? Math.min(...values) : 0;
+}
+
+export function progressMetricValue(log: ExerciseLog, exercise?: Exercise): number {
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "weighted-reps") return exerciseVolume(log);
+  if (trackingType === "timed") return totalSecondsForExerciseLog(log);
+  return totalRepsForExerciseLog(log, exercise);
+}
+
+export function trendMetricLabels(exercise?: Exercise) {
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "assistance-reps") {
+    return { primary: "Total Reps", secondary: "Assistance Trend", best: "Best Assisted Set", tableMetric: "Total Reps" };
+  }
+  if (trackingType === "bodyweight-reps") {
+    return { primary: "Total Reps", secondary: "Best Set", best: "Best Set", tableMetric: "Total Reps" };
+  }
+  if (trackingType === "timed") {
+    return { primary: "Total Seconds", secondary: "Best Hold", best: "Best Hold", tableMetric: "Total Seconds" };
+  }
+  return { primary: "Total Volume", secondary: "Load Trend", best: "Best Set", tableMetric: "Total Volume" };
 }

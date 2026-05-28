@@ -28,6 +28,7 @@ import {
   AppData,
   BodyWeightLog,
   DayKey,
+  Exercise,
   ExerciseLog,
   GamificationSettings,
   ProgramSettings,
@@ -51,18 +52,29 @@ import {
   exerciseSessions,
   exerciseVolume,
   findExercise,
+  bestAssistance,
+  bestSetReps,
+  bestTimedSet,
   getOrCreateLog,
   isTrainingDay,
+  loadIsAssistance,
+  loadLabelForExercise,
   latestBodyWeight,
-  numericValue,
   plannedTrainingDaysElapsedThisWeek,
   prefillWorkoutLogFromHistory,
   previousExercisePerformance,
   previousSetSummary,
+  progressMetricValue,
   progressionAdvice,
   refreshProgramFields,
-  repsForSet,
   sevenDayAverage,
+  shouldShowLoadInput,
+  targetRIRForExercise,
+  targetRIRForSet,
+  totalRepsForExerciseLog,
+  trackingTypeForExercise,
+  trendMetricLabels,
+  validLoadValue,
   weeklySummaries,
   workoutVolume,
 } from "./lib/progress";
@@ -495,13 +507,18 @@ function App() {
     });
   };
 
-  const startWorkout = (date = todayISO()) => {
+  const startWorkout = (date = todayISO(), performedDayKey?: DayKey) => {
     const settings = data.settings.startDate
       ? data.settings
       : { ...data.settings, startDate: date, status: "active" as const, updatedAt: new Date().toISOString() };
-    const sameDayLogs = data.workoutLogs.filter((item) => item.date === date && item.dayKey === dayKeyForDate(date));
+    const sameDayLogs = data.workoutLogs.filter((item) => item.date === date);
+    const requestedDayLogs = performedDayKey ? sameDayLogs.filter((item) => item.dayKey === performedDayKey) : sameDayLogs;
     const existing = sameDayLogs.find((item) => item.status === "draft") ?? sameDayLogs.find((item) => item.status === "completed") ?? sameDayLogs[0];
-    const log = existing ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings), data.workoutLogs);
+    const requestedExisting =
+      requestedDayLogs.find((item) => item.status === "draft") ??
+      requestedDayLogs.find((item) => item.status === "completed") ??
+      requestedDayLogs[0];
+    const log = requestedExisting ?? (!performedDayKey && existing) ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings, performedDayKey), data.workoutLogs);
     if (!data.settings.startDate) {
       persistSettings(settings);
     }
@@ -542,6 +559,19 @@ function App() {
       gamification: {
         ...current,
         seenRecaps: [...current.seenRecaps, workoutId],
+      },
+    });
+  };
+
+  const skipBodyWeightToday = () => {
+    const current = getGamificationSettings(data.settings);
+    const today = todayISO();
+    if ((current.bodyWeightPromptSkips ?? []).includes(today)) return;
+    persistSettings({
+      ...data.settings,
+      gamification: {
+        ...current,
+        bodyWeightPromptSkips: [...(current.bodyWeightPromptSkips ?? []), today],
       },
     });
   };
@@ -598,7 +628,7 @@ function App() {
       </aside>
 
       <main className="main">
-        <TopBar cycleInfo={cycleInfo} settings={data.settings} startWorkout={startWorkout} />
+        <TopBar cycleInfo={cycleInfo} settings={data.settings} data={data} startWorkout={startWorkout} />
         {loading ? (
           <LoadingScreen />
         ) : (
@@ -611,6 +641,7 @@ function App() {
                 cloudStatus={cloudStatus}
                 startWorkout={startWorkout}
                 completeRestDay={completeRestDay}
+                skipBodyWeightToday={skipBodyWeightToday}
                 onSyncNow={retrySync}
               />
             )}
@@ -731,14 +762,23 @@ function App() {
 function TopBar({
   cycleInfo,
   settings,
+  data,
   startWorkout,
 }: {
   cycleInfo: ReturnType<typeof getCycleInfo>;
   settings: ProgramSettings;
-  startWorkout: (date?: string) => void;
+  data: AppData;
+  startWorkout: (date?: string, performedDayKey?: DayKey) => void;
 }) {
   const today = todayISO();
-  const workout = workoutDays[dayKeyForDate(today)];
+  const todayLog = data.workoutLogs.find((log) => log.date === today && log.status === "draft") ??
+    data.workoutLogs.find((log) => log.date === today && log.status === "completed");
+  const workout = workoutDays[todayLog?.dayKey ?? dayKeyForDate(today)];
+  const actionLabel = todayLog?.status === "draft" ? "Continue Workout" : todayLog?.status === "completed" ? "View Recap" : "Start Today";
+  const action = () => {
+    if (todayLog?.status === "completed") navigate("recap", todayLog.id);
+    else startWorkout(today);
+  };
   return (
     <header className="top-bar">
       <div>
@@ -750,9 +790,9 @@ function TopBar({
           {settings.status && settings.status !== "active" ? ` · ${settings.status}` : ""}
         </span>
       </div>
-      <button className="primary-action" onClick={() => startWorkout(today)}>
+      <button className="primary-action" onClick={action}>
         <Play size={18} />
-        Start Today
+        {actionLabel}
       </button>
     </header>
   );
@@ -777,14 +817,16 @@ function Dashboard({
   cloudStatus,
   startWorkout,
   completeRestDay,
+  skipBodyWeightToday,
   onSyncNow,
 }: {
   data: AppData;
   gamification: GamificationSummary;
   gamificationEnabled: boolean;
   cloudStatus: ReturnType<typeof getCloudStatus>;
-  startWorkout: (date?: string) => void;
+  startWorkout: (date?: string, performedDayKey?: DayKey) => void;
   completeRestDay: (date?: string, mode?: NonNullable<WorkoutLog["restDay"]>["mode"]) => void;
+  skipBodyWeightToday: () => void;
   onSyncNow: () => void;
 }) {
   const today = todayISO();
@@ -819,6 +861,7 @@ function Dashboard({
     else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
     else if (mission.action === "rest-checkin") completeRestDay(today, "full-rest");
     else if (mission.action === "log-weight") navigate("weight");
+    else if (mission.action === "progress") navigate("progress");
     else if (mission.workoutId) navigate("recap", mission.workoutId);
   };
 
@@ -843,6 +886,11 @@ function Dashboard({
                 <Play size={18} />
                 {mission.nextBestAction}
               </button>
+              {mission.action === "log-weight" && (
+                <button className="secondary-action subtle" type="button" onClick={skipBodyWeightToday}>
+                  Skip Weight Today
+                </button>
+              )}
             </div>
           </section>
 
@@ -1025,11 +1073,23 @@ function Dashboard({
   );
 }
 
-function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?: string) => void }) {
+function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?: string, performedDayKey?: DayKey) => void }) {
   const today = todayISO();
-  const dayKey = dayKeyForDate(today);
+  const scheduledDayKey = dayKeyForDate(today);
+  const todayLog = data.workoutLogs.find((item) => item.date === today && item.status === "draft") ??
+    data.workoutLogs.find((item) => item.date === today && item.status === "completed") ??
+    data.workoutLogs.find((item) => item.date === today);
+  const dayKey = todayLog?.dayKey ?? scheduledDayKey;
   const workout = workoutDays[dayKey];
-  const log = data.workoutLogs.find((item) => item.date === today && item.dayKey === dayKey);
+  const log = todayLog;
+  const overrideChoices: Array<{ dayKey: DayKey; label: string }> = [
+    { dayKey: "monday", label: "Monday: Upper A" },
+    { dayKey: "tuesday", label: "Tuesday: Lower + Abs" },
+    { dayKey: "wednesday", label: "Wednesday: Delts + Arms" },
+    { dayKey: "friday", label: "Friday: Upper B" },
+    { dayKey: "saturday", label: "Saturday: Specialization" },
+    { dayKey: "thursday", label: "Rest / Recovery Check-In" },
+  ];
   return (
     <div className="content-stack">
       <section className="panel today-panel">
@@ -1037,12 +1097,40 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
           <p className="eyebrow">{formatDate(today, { weekday: "long" })}</p>
           <h2>{workout.title}</h2>
           <p>{workout.subtitle}</p>
+          {log?.isScheduleOverride && (
+            <div className="override-note">
+              Schedule override today: performed {workout.shortTitle} instead of {workoutDays[log.scheduledDayKey ?? scheduledDayKey].shortTitle}.
+            </div>
+          )}
         </div>
         <button className="primary-action" onClick={() => startWorkout(today)}>
           <Play size={18} />
-          {log ? "Open today's log" : "Start workout"}
+          {log?.status === "draft" ? "Continue Workout" : log?.status === "completed" ? "Open Completed Log" : "Start Workout"}
         </button>
       </section>
+      {!log && (
+        <section className="panel override-panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Schedule flexibility</p>
+              <h3>Do a Different Workout Today</h3>
+            </div>
+          </div>
+          <p className="muted-copy">This logs the selected routine day for today only. Tomorrow follows the normal calendar schedule.</p>
+          <div className="override-grid">
+            {overrideChoices.map((choice) => (
+              <button
+                key={choice.dayKey}
+                type="button"
+                className="secondary-action"
+                onClick={() => startWorkout(today, choice.dayKey)}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <WorkoutDayDetail dayKey={dayKey} compact={false} />
     </div>
   );
@@ -1148,6 +1236,13 @@ function RoutinePage() {
   );
 }
 
+function rirSummary(exercise: Exercise): string {
+  if (exercise.targetRIRByPhase) {
+    return `Target RIR setup ${exercise.targetRIRByPhase.setup} · growth ${exercise.targetRIRByPhase.growth} · push ${exercise.targetRIRByPhase.push}`;
+  }
+  return `Target RIR ${targetRIRForExercise(exercise)}`;
+}
+
 function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolean }) {
   const workout = workoutDays[dayKey];
   return (
@@ -1174,15 +1269,18 @@ function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolea
       {!!workout.exercises.length && (
         <div className="exercise-list">
           {workout.exercises.map((exercise, index) => (
-            <article key={exercise.id} className="exercise-card">
+            <article key={exercise.id} className={classNames("exercise-card", exercise.supersetGroup && "superset-card")}>
               <div className="exercise-index">{exercise.superset ?? index + 1}</div>
               <div>
                 <h4>{exercise.name}</h4>
                 <div className="exercise-meta">
                   <span>{exercise.sets} x {exercise.reps ?? exercise.seconds}</span>
                   <span>{exercise.rest}</span>
+                  <span>{rirSummary(exercise)}</span>
+                  {shouldShowLoadInput(exercise) && <span>{loadLabelForExercise(exercise)}</span>}
                   <span>{exercise.target}</span>
                 </div>
+                {exercise.supersetLabel && <span className="superset-chip">{exercise.supersetLabel}</span>}
                 {!compact && <p>{exercise.notes}</p>}
                 {exercise.logHint && <small>{exercise.logHint}</small>}
               </div>
@@ -1237,7 +1335,7 @@ function LoggerPage({
   data: AppData;
   onSave: (log: WorkoutLog) => void;
   onDelete: (id: string) => void;
-  startWorkout: (date?: string) => void;
+  startWorkout: (date?: string, performedDayKey?: DayKey) => void;
   gamification: GamificationSummary;
 }) {
   const log = data.workoutLogs.find((item) => item.id === logId);
@@ -1255,6 +1353,7 @@ function LoggerPage({
   }
 
   const workout = workoutDays[log.dayKey];
+  const originalWorkout = log.isScheduleOverride ? workoutDays[log.scheduledDayKey ?? dayKeyForDate(log.date)] : undefined;
   const updateLog = (mutator: (current: WorkoutLog) => WorkoutLog) => onSave(mutator(log));
   const loggingQuality = loggingQualityForWorkout(log);
   const prCount = gamification.prs.filter((pr) => pr.workoutId === log.id).length;
@@ -1288,6 +1387,11 @@ function LoggerPage({
           <p>
             {formatDate(log.date, { weekday: "long", year: "numeric" })} · Program Week {log.week} · Cycle {log.cycle ?? Math.floor((log.week - 1) / 8) + 1}, Week {log.weekInCycle ?? ((log.week - 1) % 8) + 1} · {log.status}
           </p>
+          {originalWorkout && (
+            <div className="override-note">
+              Schedule override: performed {workout.shortTitle} · originally scheduled {originalWorkout.shortTitle}.
+            </div>
+          )}
         </div>
         <div className="logger-actions">
           <button className="secondary-action danger" onClick={() => {
@@ -1415,7 +1519,7 @@ function RecapPage({
   data: AppData;
   gamification: GamificationSummary;
   markSeen: (id: string) => void;
-  startWorkout: (date?: string) => void;
+  startWorkout: (date?: string, performedDayKey?: DayKey) => void;
 }) {
   const recap = logId ? buildWorkoutRecap(logId, data) : null;
   useEffect(() => {
@@ -1521,17 +1625,6 @@ function LogExerciseCard({
     });
   };
 
-  const copyPreviousWeights = () => {
-    if (!previous) return;
-    onChange({
-      ...exerciseLog,
-      sets: exerciseLog.sets.map((set, index) => ({
-        ...set,
-        weight: previous.exerciseLog.sets[index]?.weight ?? set.weight,
-      })),
-    });
-  };
-
   if (cardio) {
     return (
       <section className="panel log-card cardio-log">
@@ -1594,17 +1687,31 @@ function LogExerciseCard({
   }
 
   if (!exercise) return null;
-  const weightLabel = /db|dumbbell/i.test(exercise.name) ? "Weight (lb per DB)" : "Weight (lb)";
+  const trackingType = trackingTypeForExercise(exercise);
+  const showLoad = shouldShowLoadInput(exercise);
+  const loadLabel = loadLabelForExercise(exercise);
+  const rirTarget = targetRIRForExercise(exercise, log.weekInCycle);
+  const copyPreviousLoad = () => {
+    if (!previous || !showLoad) return;
+    onChange({
+      ...exerciseLog,
+      sets: exerciseLog.sets.map((set, index) => ({
+        ...set,
+        weight: previous.exerciseLog.sets[index]?.weight ?? set.weight,
+      })),
+    });
+  };
 
   return (
-    <section className="panel log-card">
+    <section className={classNames("panel log-card", exercise.supersetGroup && "superset-card")}>
       <div className="log-card-heading">
         <div>
           <p className="eyebrow">{exercise.target}</p>
           <h3>{exercise.name}</h3>
           <p>
-            {exercise.sets} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest}
+            {exercise.sets} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest} · Target RIR {rirTarget}
           </p>
+          {exercise.supersetLabel && <span className="superset-chip">{exercise.supersetLabel}</span>}
         </div>
         <label className="complete-toggle">
           <input
@@ -1619,20 +1726,23 @@ function LogExerciseCard({
       {exercise.logHint && <div className="guidance-card">{exercise.logHint}</div>}
       {previous && (
         <div className="previous-box">
-          <strong>Previous:</strong> {formatDate(previous.workout.date)} · {Math.round(exerciseVolume(previous.exerciseLog)).toLocaleString()} volume ·{" "}
+          <strong>Previous:</strong> {formatDate(previous.workout.date)} ·{" "}
+          {showLoad && !loadIsAssistance(exercise) ? `${Math.round(exerciseVolume(previous.exerciseLog)).toLocaleString()} volume · ` : ""}
           {previous.exerciseLog.sets.filter((set) => set.completed).length} sets
           <span>{previousSetSummary(previous.exerciseLog, exercise)}</span>
-          <button className="mini-action" type="button" onClick={copyPreviousWeights}>
-            Copy previous weights
-          </button>
+          {showLoad && (
+            <button className="mini-action" type="button" onClick={copyPreviousLoad}>
+              Copy previous {loadIsAssistance(exercise) ? "assistance" : "weights"}
+            </button>
+          )}
         </div>
       )}
-      <div className="set-table">
+      <div className={classNames("set-table", !showLoad && "no-load", exercise.unilateral && "unilateral", trackingType === "timed" && "timed")}>
         <div className="set-row header">
           <span>Set</span>
           <span>Target</span>
-          <span>Weight</span>
-          {exercise.kind === "timed" ? (
+          {showLoad && <span>{loadIsAssistance(exercise) ? "Assistance" : "Weight"}</span>}
+          {trackingType === "timed" ? (
             <span>Seconds</span>
           ) : exercise.unilateral ? (
             <>
@@ -1648,12 +1758,14 @@ function LogExerciseCard({
         {exerciseLog.sets.map((set) => (
           <div key={set.id} className="set-row">
             <div className="set-cell set-number"><span>Set</span><strong>{set.setNumber}</strong></div>
-            <div className="set-cell"><span>Target</span><strong>{set.target}</strong></div>
-            <label className="set-cell">
-              <span>{weightLabel}</span>
-              <input value={set.weight ?? ""} onChange={(event) => updateSet(set.id, { weight: event.target.value })} inputMode="decimal" placeholder="lb" />
-            </label>
-            {exercise.kind === "timed" ? (
+            <div className="set-cell"><span>Target · RIR {targetRIRForSet(exercise, log.weekInCycle, set.setNumber)}</span><strong>{set.target}</strong></div>
+            {showLoad && (
+              <label className="set-cell">
+                <span>{loadLabel}</span>
+                <input value={set.weight ?? ""} onChange={(event) => updateSet(set.id, { weight: event.target.value })} inputMode="decimal" placeholder="lb" />
+              </label>
+            )}
+            {trackingType === "timed" ? (
               <label className="set-cell">
                 <span>Seconds</span>
                 <input value={set.seconds ?? ""} onChange={(event) => updateSet(set.id, { seconds: event.target.value })} inputMode="numeric" placeholder="sec" />
@@ -1746,18 +1858,35 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
     return entryWeek >= Math.max(1, cycleInfo.programWeek - 7);
   });
   const sessions = exerciseSessions(filteredLogs, selectedExercise);
-  const volumePoints = sessions.map((session) => exerciseVolume(session.exerciseLog));
-  const repPoints = sessions.map((session) =>
-    session.exerciseLog.sets.reduce((sum, set) => sum + repsForSet(set, session.exercise), 0),
-  );
-  const weightPoints = sessions.map((session) => {
-    const weights = session.exerciseLog.sets.map((set) => numericValue(set.weight)).filter(Boolean);
-    return weights.length ? Math.max(...weights) : 0;
+  const selectedExerciseMeta = sessions[0]?.exercise ?? allExercises.find((exercise) => exercise.name === selectedExercise);
+  const trendLabels = trendMetricLabels(selectedExerciseMeta);
+  const selectedTrackingType = trackingTypeForExercise(selectedExerciseMeta);
+  const primaryPoints = sessions.map((session) => progressMetricValue(session.exerciseLog, session.exercise));
+  const secondaryPoints = sessions.map((session) => {
+    const type = trackingTypeForExercise(session.exercise);
+    if (type === "weighted-reps") {
+      const loads = session.exerciseLog.sets.map((set) => validLoadValue(set.weight)).filter(Boolean);
+      return loads.length ? Math.max(...loads) : 0;
+    }
+    if (type === "assistance-reps") return bestAssistance(session.exerciseLog);
+    if (type === "timed") return bestTimedSet(session.exerciseLog);
+    return bestSetReps(session.exerciseLog, session.exercise);
   });
+  const repPoints = sessions.map((session) => totalRepsForExerciseLog(session.exerciseLog, session.exercise));
   const best = sessions.reduce(
-    (winner, session) => (exerciseVolume(session.exerciseLog) > exerciseVolume(winner?.exerciseLog as ExerciseLog) ? session : winner),
+    (winner, session) => (progressMetricValue(session.exerciseLog, session.exercise) > progressMetricValue(winner?.exerciseLog as ExerciseLog, winner?.exercise) ? session : winner),
     sessions[0],
   );
+  const bestValue = best ? progressMetricValue(best.exerciseLog, best.exercise) : 0;
+  const bestLabel = !best
+    ? "None"
+    : selectedTrackingType === "weighted-reps"
+      ? `${Math.round(bestValue).toLocaleString()} vol`
+      : selectedTrackingType === "timed"
+        ? `${bestTimedSet(best.exerciseLog)} sec`
+        : selectedTrackingType === "assistance-reps"
+          ? `${bestAssistance(best.exerciseLog)} lb assist`
+          : `${bestSetReps(best.exerciseLog, best.exercise)} reps`;
   const weekly = weeklySummaries(filteredLogs, progressSettings);
   const cycleRows = Array.from(
     filteredLogs.reduce((map, log) => {
@@ -1841,17 +1970,20 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
             ))}
           </select>
         </div>
+        <div className="guidance-card">
+          Weighted volume means completed set load x reps, summed across completed sets. Dumbbell volume uses the logged per-DB load unless a routine multiplier is set. Bodyweight, timed, assisted, and cardio work do not show fake weighted volume.
+        </div>
         {sessions.length ? (
           <>
             <div className="stats-grid compact">
               <StatCard icon={Dumbbell} label="Logged sessions" value={`${sessions.length}`} detail="Completed sessions with this exercise." />
-              <StatCard icon={BarChart3} label="Best performance" value={best ? `${Math.round(exerciseVolume(best.exerciseLog)).toLocaleString()} vol` : "None"} detail={best ? formatDate(best.workout.date) : "Log this exercise first."} />
-              <StatCard icon={Activity} label="Last vs previous" value={compareLastTwoExerciseSessions(data.workoutLogs, selectedExercise)} detail="Uses estimated volume when weight is logged." />
+              <StatCard icon={BarChart3} label={trendLabels.best} value={bestLabel} detail={best ? formatDate(best.workout.date) : "Log this exercise first."} />
+              <StatCard icon={Activity} label="Last vs previous" value={compareLastTwoExerciseSessions(data.workoutLogs, selectedExercise)} detail="Uses tracking-aware reps, seconds, assistance, or volume." />
             </div>
             <div className="chart-grid">
-              <ChartPanel title="Weight trend" values={weightPoints} />
-              <ChartPanel title="Rep trend" values={repPoints} stroke="#73a7ff" />
-              <ChartPanel title="Estimated volume" values={volumePoints} stroke="#f5b84b" />
+              <ChartPanel title={trendLabels.primary} values={primaryPoints} stroke="#f5b84b" />
+              <ChartPanel title={trendLabels.secondary} values={secondaryPoints} />
+              {selectedTrackingType === "weighted-reps" && <ChartPanel title="Total Reps" values={repPoints} stroke="#73a7ff" />}
             </div>
             <div className="responsive-table">
               <table>
@@ -1860,8 +1992,8 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
                     <th>Date</th>
                     <th>Week</th>
                     <th>Sets</th>
-                    <th>Total reps/sec</th>
-                    <th>Volume</th>
+                    <th>{trendLabels.tableMetric}</th>
+                    <th>{trendLabels.secondary}</th>
                     <th>Guidance</th>
                   </tr>
                 </thead>
@@ -1871,8 +2003,16 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
                       <td>{formatDate(session.workout.date)}</td>
                       <td>{session.workout.week}</td>
                       <td>{session.exerciseLog.sets.filter((set) => set.completed).length}</td>
-                      <td>{session.exerciseLog.sets.reduce((sum, set) => sum + repsForSet(set, session.exercise), 0)}</td>
-                      <td>{Math.round(exerciseVolume(session.exerciseLog)).toLocaleString()}</td>
+                      <td>{Math.round(progressMetricValue(session.exerciseLog, session.exercise)).toLocaleString()}</td>
+                      <td>{
+                        trackingTypeForExercise(session.exercise) === "weighted-reps"
+                          ? Math.max(0, ...session.exerciseLog.sets.map((set) => validLoadValue(set.weight))).toLocaleString()
+                          : trackingTypeForExercise(session.exercise) === "assistance-reps"
+                            ? `${bestAssistance(session.exerciseLog) || "-"} lb`
+                            : trackingTypeForExercise(session.exercise) === "timed"
+                              ? `${bestTimedSet(session.exerciseLog)} sec`
+                              : `${bestSetReps(session.exerciseLog, session.exercise)} reps`
+                      }</td>
                       <td>{progressionAdvice(session.exerciseLog)}</td>
                     </tr>
                   ))}
@@ -2145,7 +2285,7 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
   );
 }
 
-function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (date?: string) => void }) {
+function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (date?: string, performedDayKey?: DayKey) => void }) {
   const [filter, setFilter] = useState("");
   const [dayFilter, setDayFilter] = useState<"all" | DayKey>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "completed">("all");
@@ -2203,6 +2343,11 @@ function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (dat
                   <p className="eyebrow">Program Week {log.week} · Cycle {log.cycle ?? Math.floor((log.week - 1) / 8) + 1} · {log.status}</p>
                   <h3>{log.workoutTitle}</h3>
                   <p>{formatDate(log.date, { weekday: "long", year: "numeric" })}</p>
+                  {log.isScheduleOverride && (
+                    <div className="override-note">
+                      Performed: {workoutDays[log.performedDayKey ?? log.dayKey].shortTitle} · Originally scheduled: {workoutDays[log.scheduledDayKey ?? dayKeyForDate(log.date)].shortTitle}
+                    </div>
+                  )}
                   <div className="exercise-meta">
                     <span>{completedExerciseCount(log)} items</span>
                     <span>{completedSetCount(log)} sets</span>
@@ -2530,11 +2675,11 @@ function createGamificationSampleData(currentSettings: ProgramSettings): AppData
             sets: exerciseLog.sets.map((set) => ({
               ...set,
               completed: true,
-              weight: exercise?.kind === "timed" ? "" : String(15 + exerciseIndex * 5 + Math.floor(offset / 7) * 2),
-              reps: exercise?.kind === "timed" || exercise?.unilateral ? set.reps : String(8 + (offset % 3)),
+              weight: shouldShowLoadInput(exercise) ? String(15 + exerciseIndex * 5 + Math.floor(offset / 7) * 2) : "",
+              reps: trackingTypeForExercise(exercise) === "timed" || exercise?.unilateral ? set.reps : String(8 + (offset % 3)),
               leftReps: exercise?.unilateral ? String(8 + (offset % 3)) : set.leftReps,
               rightReps: exercise?.unilateral ? String(8 + (offset % 3)) : set.rightReps,
-              seconds: exercise?.kind === "timed" ? String(25 + (offset % 4) * 3) : set.seconds,
+              seconds: trackingTypeForExercise(exercise) === "timed" ? String(25 + (offset % 4) * 3) : set.seconds,
               rir: "1",
             })),
             cardio: exerciseLog.cardio ? { ...exerciseLog.cardio, duration: "12", intensityNotes: "Easy, conversational pace", completed: true } : exerciseLog.cardio,

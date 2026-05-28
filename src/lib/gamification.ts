@@ -2,13 +2,23 @@ import { AppData, BodyWeightLog, DayKey, Exercise, ExerciseLog, GamificationSett
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
 import { addDays, dayKeyForDate, daysSince, getCycleInfo, todayISO } from "./date";
 import {
+  bestAssistance,
+  bestSetReps,
+  bestTimedSet,
   completedExerciseCount,
   completedSetCount,
   effectiveProgramStartDate,
   exerciseVolume,
   findExercise,
   isTrainingDay,
-  numericValue,
+  loadRequiredForExercise,
+  totalRepsForExerciseLog,
+  totalSecondsForExerciseLog,
+  trackingTypeForExercise,
+  validLoadValue,
+  validRepValue,
+  validRirValue,
+  validSecondValue,
   workoutVolume,
 } from "./progress";
 
@@ -48,7 +58,7 @@ export interface PRRecord {
   date: string;
   workoutId: string;
   exerciseName: string;
-  metric: "weight" | "reps-at-weight" | "total-reps" | "volume" | "timed";
+  metric: "weight" | "reps-at-weight" | "total-reps" | "volume" | "timed" | "assistance" | "best-set";
   label: string;
   value: number;
   previous?: number;
@@ -108,7 +118,7 @@ export interface TodayMission {
   availableXP: number;
   focusCue: string;
   nextBestAction: string;
-  action: "sync" | "continue-workout" | "review-recap" | "start-workout" | "rest-checkin" | "log-weight";
+  action: "sync" | "continue-workout" | "review-recap" | "start-workout" | "rest-checkin" | "log-weight" | "progress";
   workoutId?: string;
 }
 
@@ -148,6 +158,7 @@ export const defaultGamificationSettings: GamificationSettings = {
   version: 1,
   badgeUnlocks: {},
   seenRecaps: [],
+  bodyWeightPromptSkips: [],
 };
 
 const HARD_CARDIO_RE = /\b(HIIT|sprint|running|run|interval|max effort|hard stair|stairmaster interval|all out)\b/i;
@@ -160,6 +171,7 @@ export function getGamificationSettings(settings?: ProgramSettings): Gamificatio
     ...(incoming ?? {}),
     badgeUnlocks: { ...(incoming?.badgeUnlocks ?? {}) },
     seenRecaps: Array.from(new Set(incoming?.seenRecaps ?? [])),
+    bodyWeightPromptSkips: Array.from(new Set(incoming?.bodyWeightPromptSkips ?? [])),
   };
 }
 
@@ -180,6 +192,13 @@ export function mergeGamificationSettings(
     ...normalizedBase,
     badgeUnlocks,
     seenRecaps: Array.from(new Set([...(normalizedBase.seenRecaps ?? []), ...(local?.seenRecaps ?? []), ...(remote?.seenRecaps ?? [])])),
+    bodyWeightPromptSkips: Array.from(
+      new Set([
+        ...(normalizedBase.bodyWeightPromptSkips ?? []),
+        ...(local?.bodyWeightPromptSkips ?? []),
+        ...(remote?.bodyWeightPromptSkips ?? []),
+      ]),
+    ),
   };
 }
 
@@ -199,43 +218,16 @@ export function normalizedExerciseName(name: string): string {
     .trim();
 }
 
-function validWeight(value?: string): number {
-  const parsed = numericValue(value);
-  return parsed > 0 && parsed <= 500 ? parsed : 0;
-}
-
-function validReps(value?: string): number {
-  const parsed = numericValue(value);
-  return parsed > 0 && parsed <= 100 ? parsed : 0;
-}
-
-function validSeconds(value?: string): number {
-  const parsed = numericValue(value);
-  return parsed > 0 && parsed <= 600 ? parsed : 0;
-}
-
-function validRir(value?: string): boolean {
-  if (!value) return false;
-  const parsed = numericValue(value);
-  return parsed >= 0 && parsed <= 10;
-}
-
-function exerciseRequiresWeight(exercise: Exercise): boolean {
-  if (exercise.kind !== "strength") return false;
-  if (/walkout|reverse crunch|dead bug|plank|hollow|push-up/i.test(exercise.name)) return false;
-  return /db|dumbbell|barbell|bench|press|row|curl|raise|extension|pull-up|dip|squat|deadlift|rdl|calf|pullover/i.test(exercise.name);
-}
-
 function setHasValidReps(set: SetLog, exercise: Exercise): boolean {
-  if (exercise.kind === "timed") return validSeconds(set.seconds) > 0;
-  if (exercise.unilateral) return validReps(set.leftReps) > 0 && validReps(set.rightReps) > 0;
-  return validReps(set.reps) > 0;
+  if (trackingTypeForExercise(exercise) === "timed") return validSecondValue(set.seconds) > 0;
+  if (exercise.unilateral) return validRepValue(set.leftReps) > 0 && validRepValue(set.rightReps) > 0;
+  return validRepValue(set.reps) > 0;
 }
 
 function setIsFullyLogged(set: SetLog, exercise: Exercise): boolean {
   if (!set.completed || !setHasValidReps(set, exercise)) return false;
-  if (exerciseRequiresWeight(exercise) && !validWeight(set.weight)) return false;
-  return validRir(set.rir);
+  if (loadRequiredForExercise(exercise) && !validLoadValue(set.weight)) return false;
+  return validRirValue(set.rir);
 }
 
 function exerciseLogFullyLogged(log: ExerciseLog): boolean {
@@ -283,7 +275,7 @@ export function canonicalWorkoutLogs(logs: WorkoutLog[]): WorkoutLog[] {
       return aTime - bTime;
     })
     .forEach((log) => {
-      const key = `${log.date}:${log.dayKey}`;
+      const key = log.date;
       const current = byDay.get(key);
       if (!current) {
         byDay.set(key, log);
@@ -306,13 +298,13 @@ function weekDates(startDate: string, week: number): string[] {
   return Array.from({ length: 7 }, (_, index) => addDays(startDate, (week - 1) * 7 + index));
 }
 
-function completedTrainingDatesByWeek(logs: WorkoutLog[], week: number): Set<DayKey> {
-  return new Set(logs.filter((log) => log.week === week && log.status === "completed" && isTrainingDay(log.dayKey)).map((log) => log.dayKey));
+function completedTrainingDatesByWeek(logs: WorkoutLog[], week: number): Set<string> {
+  return new Set(logs.filter((log) => log.week === week && log.status === "completed" && isTrainingDay(log.dayKey)).map((log) => log.date));
 }
 
 function allScheduledWorkoutsComplete(logs: WorkoutLog[], week: number): boolean {
   const days = completedTrainingDatesByWeek(logs, week);
-  return trainingDayKeys.every((dayKey) => days.has(dayKey));
+  return days.size >= trainingDayKeys.length;
 }
 
 export function detectPRs(data: AppData): PRRecord[] {
@@ -322,66 +314,84 @@ export function detectPRs(data: AppData): PRRecord[] {
   const bestTotalReps = new Map<string, number>();
   const bestVolume = new Map<string, number>();
   const bestTimed = new Map<string, number>();
+  const bestTotalSeconds = new Map<string, number>();
+  const bestBodyweightSet = new Map<string, number>();
+  const bestAssistedRepsAtAssistance = new Map<string, number>();
+  const bestLowAssistance = new Map<string, { assistance: number; totalReps: number }>();
+
+  const recordIfBetter = (
+    key: string,
+    current: number,
+    store: Map<string, number>,
+    makeRecord: (previous: number) => PRRecord,
+  ) => {
+    const previous = store.get(key);
+    if (current <= 0 || current <= (previous ?? 0)) return;
+    if (previous !== undefined) prs.push(makeRecord(previous));
+    store.set(key, current);
+  };
 
   canonicalWorkoutLogs(data.workoutLogs)
     .filter((log) => log.status === "completed")
     .forEach((workout) => {
       workout.exerciseLogs.forEach((exerciseLog) => {
         const exercise = findExercise(exerciseLog.exerciseId);
-        if (!exercise) return;
+        if (!exercise || exercise.prEligible === false) return;
         const name = exercise.name;
         const normalized = normalizedExerciseName(name);
         const completedSets = exerciseLog.sets.filter((set) => set.completed);
         if (!completedSets.length) return;
 
-        const weights = completedSets.map((set) => validWeight(set.weight)).filter(Boolean);
-        const totalReps = completedSets.reduce((sum, set) => {
-          if (exercise.kind === "timed") return sum;
-          if (exercise.unilateral) return sum + validReps(set.leftReps) + validReps(set.rightReps);
-          return sum + validReps(set.reps);
-        }, 0);
+        const trackingType = trackingTypeForExercise(exercise);
+        const totalReps = totalRepsForExerciseLog(exerciseLog, exercise);
         const sessionVolume = exerciseVolume(exerciseLog);
-        const timedBest = Math.max(0, ...completedSets.map((set) => validSeconds(set.seconds)));
 
-        const maxWeight = Math.max(0, ...weights);
-        if (maxWeight > 0 && maxWeight > (bestWeight.get(normalized) ?? 0)) {
-          prs.push({
+        if (trackingType === "weighted-reps") {
+          const loads = completedSets.map((set) => validLoadValue(set.weight)).filter(Boolean);
+          const maxLoad = Math.max(0, ...loads);
+          const unit = /db|dumbbell/i.test(name) ? "lb per DB" : "lb";
+          recordIfBetter(normalized, maxLoad, bestWeight, (previous) => ({
             id: `pr:${normalized}:${workout.date}:weight`,
             date: workout.date,
             workoutId: workout.id,
             exerciseName: name,
             metric: "weight",
-            label: `New best load: ${maxWeight} lb${/db|dumbbell/i.test(name) ? " per dumbbell" : ""}`,
-            value: maxWeight,
-            previous: bestWeight.get(normalized),
-            unit: /db|dumbbell/i.test(name) ? "lb per dumbbell" : "lb",
-          });
-          bestWeight.set(normalized, maxWeight);
-        }
+            label: `New best load: ${maxLoad} ${unit}`,
+            value: maxLoad,
+            previous,
+            unit,
+          }));
 
-        completedSets.forEach((set) => {
-          const weight = validWeight(set.weight);
-          const reps = exercise.unilateral ? Math.min(validReps(set.leftReps), validReps(set.rightReps)) : validReps(set.reps);
-          if (!weight || !reps) return;
-          const key = `${normalized}:${weight}`;
-          if (reps > (bestRepsAtWeight.get(key) ?? 0)) {
-            prs.push({
-              id: `pr:${normalized}:${workout.date}:reps-${weight}`,
+          completedSets.forEach((set) => {
+            const load = validLoadValue(set.weight);
+            const reps = exercise.unilateral ? Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps)) : validRepValue(set.reps);
+            if (!load || !reps) return;
+            const key = `${normalized}:${load}`;
+            recordIfBetter(key, reps, bestRepsAtWeight, (previous) => ({
+              id: `pr:${normalized}:${workout.date}:reps-${load}`,
               date: workout.date,
               workoutId: workout.id,
               exerciseName: name,
               metric: "reps-at-weight",
-              label: `${reps} reps at ${weight} lb${/db|dumbbell/i.test(name) ? " per dumbbell" : ""}`,
+              label: `${reps} reps at ${load} ${unit}`,
               value: reps,
-              previous: bestRepsAtWeight.get(key),
-              unit: `reps at ${weight} lb`,
-            });
-            bestRepsAtWeight.set(key, reps);
-          }
-        });
+              previous,
+              unit: `reps at ${load} ${unit}`,
+            }));
+          });
 
-        if (totalReps > 0 && totalReps > (bestTotalReps.get(normalized) ?? 0)) {
-          prs.push({
+          recordIfBetter(normalized, sessionVolume, bestVolume, (previous) => ({
+            id: `pr:${normalized}:${workout.date}:volume`,
+            date: workout.date,
+            workoutId: workout.id,
+            exerciseName: name,
+            metric: "volume",
+            label: `${Math.round(sessionVolume).toLocaleString()} lb logged volume`,
+            value: sessionVolume,
+            previous,
+            unit: "lb volume",
+          }));
+          recordIfBetter(`${normalized}:total-reps`, totalReps, bestTotalReps, (previous) => ({
             id: `pr:${normalized}:${workout.date}:total-reps`,
             date: workout.date,
             workoutId: workout.id,
@@ -389,45 +399,112 @@ export function detectPRs(data: AppData): PRRecord[] {
             metric: "total-reps",
             label: `${totalReps} total reps`,
             value: totalReps,
-            previous: bestTotalReps.get(normalized),
+            previous,
             unit: "total reps",
-          });
-          bestTotalReps.set(normalized, totalReps);
+          }));
+          return;
         }
 
-        if (sessionVolume > 0 && sessionVolume > (bestVolume.get(normalized) ?? 0)) {
-          prs.push({
-            id: `pr:${normalized}:${workout.date}:volume`,
-            date: workout.date,
-            workoutId: workout.id,
-            exerciseName: name,
-            metric: "volume",
-            label: `${Math.round(sessionVolume).toLocaleString()} lb volume`,
-            value: sessionVolume,
-            previous: bestVolume.get(normalized),
-            unit: "lb volume",
+        if (trackingType === "assistance-reps") {
+          completedSets.forEach((set) => {
+            const assistance = validLoadValue(set.weight);
+            const reps = exercise.unilateral ? Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps)) : validRepValue(set.reps);
+            if (!assistance || !reps) return;
+            const key = `${normalized}:${assistance}`;
+            recordIfBetter(key, reps, bestAssistedRepsAtAssistance, (previous) => ({
+              id: `pr:${normalized}:${workout.date}:assisted-reps-${assistance}`,
+              date: workout.date,
+              workoutId: workout.id,
+              exerciseName: name,
+              metric: "assistance",
+              label: `More reps at same assistance: ${reps} reps at ${assistance} lb assistance`,
+              value: reps,
+              previous,
+              unit: `reps at ${assistance} lb assistance`,
+            }));
           });
-          bestVolume.set(normalized, sessionVolume);
+
+          const currentAssistance = bestAssistance(exerciseLog);
+          const previousLow = bestLowAssistance.get(normalized);
+          if (
+            currentAssistance > 0 &&
+            (!previousLow || currentAssistance < previousLow.assistance || (currentAssistance === previousLow.assistance && totalReps > previousLow.totalReps))
+          ) {
+            if (previousLow && currentAssistance < previousLow.assistance && totalReps >= previousLow.totalReps) {
+              prs.push({
+                id: `pr:${normalized}:${workout.date}:less-assistance`,
+                date: workout.date,
+                workoutId: workout.id,
+                exerciseName: name,
+                metric: "assistance",
+                label: `Less assistance at same/higher reps: ${currentAssistance} lb assistance`,
+                value: currentAssistance,
+                previous: previousLow.assistance,
+                unit: "lb assistance",
+              });
+            }
+            bestLowAssistance.set(normalized, { assistance: currentAssistance, totalReps });
+          }
+          return;
         }
 
-        if (exercise.kind === "timed" && timedBest > (bestTimed.get(normalized) ?? 0)) {
-          prs.push({
+        if (trackingType === "timed") {
+          const bestHold = bestTimedSet(exerciseLog);
+          const totalSeconds = totalSecondsForExerciseLog(exerciseLog);
+          recordIfBetter(normalized, bestHold, bestTimed, (previous) => ({
             id: `pr:${normalized}:${workout.date}:timed`,
             date: workout.date,
             workoutId: workout.id,
             exerciseName: name,
             metric: "timed",
-            label: `${timedBest} sec hold`,
-            value: timedBest,
-            previous: bestTimed.get(normalized),
+            label: `${bestHold} sec best hold`,
+            value: bestHold,
+            previous,
             unit: "sec",
-          });
-          bestTimed.set(normalized, timedBest);
+          }));
+          recordIfBetter(`${normalized}:total-seconds`, totalSeconds, bestTotalSeconds, (previous) => ({
+            id: `pr:${normalized}:${workout.date}:total-seconds`,
+            date: workout.date,
+            workoutId: workout.id,
+            exerciseName: name,
+            metric: "timed",
+            label: `${totalSeconds} total seconds`,
+            value: totalSeconds,
+            previous,
+            unit: "sec",
+          }));
+          return;
+        }
+
+        if (trackingType === "bodyweight-reps") {
+          const bestSet = bestSetReps(exerciseLog, exercise);
+          recordIfBetter(normalized, bestSet, bestBodyweightSet, (previous) => ({
+            id: `pr:${normalized}:${workout.date}:best-set`,
+            date: workout.date,
+            workoutId: workout.id,
+            exerciseName: name,
+            metric: "best-set",
+            label: `${bestSet} reps best set`,
+            value: bestSet,
+            previous,
+            unit: "reps",
+          }));
+          recordIfBetter(`${normalized}:total-reps`, totalReps, bestTotalReps, (previous) => ({
+            id: `pr:${normalized}:${workout.date}:total-reps`,
+            date: workout.date,
+            workoutId: workout.id,
+            exerciseName: name,
+            metric: "total-reps",
+            label: `${totalReps} total reps`,
+            value: totalReps,
+            previous,
+            unit: "total reps",
+          }));
         }
       });
     });
 
-  return prs.filter((pr) => pr.previous !== undefined).sort((a, b) => a.date.localeCompare(b.date));
+  return prs.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 }
 
 export function calculateLevelFromXP(totalXP: number): LevelInfo {
@@ -815,21 +892,27 @@ export function calculateGamification(data: AppData): GamificationSummary {
 
 export function buildTodayMission(data: AppData, hasSyncIssue = false): TodayMission {
   const today = todayISO();
-  const dayKey = dayKeyForDate(today);
-  const workout = workoutDays[dayKey];
+  const scheduledDayKey = dayKeyForDate(today);
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
   const cycle = getCycleInfo(startDate, today);
-  const todayLogs = data.workoutLogs.filter((log) => log.date === today && log.dayKey === dayKey);
+  const todayLogs = data.workoutLogs.filter((log) => log.date === today);
   const draft = todayLogs.find((log) => log.status === "draft");
   const completed = todayLogs.find((log) => log.status === "completed");
+  const activeDayKey = draft?.dayKey ?? completed?.dayKey ?? scheduledDayKey;
+  const workout = workoutDays[activeDayKey];
   const gamification = calculateGamification(data);
   const weeklyWeights = data.bodyWeights.filter((entry) => getCycleInfo(startDate, entry.date).programWeek === cycle.programWeek).length;
+  const weightLoggedToday = data.bodyWeights.some((entry) => entry.date === today);
+  const weightSkippedToday = new Set(gamification.settings.bodyWeightPromptSkips ?? []).has(today);
   const nearLevel = gamification.level.xpToNext <= 100;
-  const focusCue = nextFocusCue(data, today);
+  const focusCue = nextFocusCue(data, today, activeDayKey);
+  const overrideText = (draft ?? completed)?.isScheduleOverride
+    ? ` · Schedule override: ${workout.shortTitle} instead of ${workoutDays[(draft ?? completed)!.scheduledDayKey ?? scheduledDayKey].shortTitle}`
+    : "";
   const base = {
-    title: isTrainingDay(dayKey) ? workout.shortTitle : "Recovery Day",
-    subtitle: `Program Week ${cycle.programWeek} · Cycle ${cycle.cycle}, Week ${cycle.weekInCycle} of 8`,
-    availableXP: isTrainingDay(dayKey) ? (workout.cardio ? 185 : 170) : 40,
+    title: isTrainingDay(activeDayKey) ? workout.shortTitle : "Recovery Day",
+    subtitle: `Program Week ${cycle.programWeek} · Cycle ${cycle.cycle}, Week ${cycle.weekInCycle} of 8${overrideText}`,
+    availableXP: isTrainingDay(activeDayKey) ? (workout.cardio ? 185 : 170) : 40,
     focusCue,
   };
   if (hasSyncIssue) return { ...base, nextBestAction: "Sync data so today starts clean.", action: "sync" };
@@ -837,15 +920,15 @@ export function buildTodayMission(data: AppData, hasSyncIssue = false): TodayMis
   if (completed && !gamification.settings.seenRecaps.includes(completed.id)) {
     return { ...base, nextBestAction: "Review Recap", action: "review-recap", workoutId: completed.id };
   }
-  if (isTrainingDay(dayKey)) return { ...base, nextBestAction: "Start today's workout.", action: "start-workout" };
-  if (!completed?.restDay?.completed) return { ...base, nextBestAction: "Complete rest-day check-in.", action: "rest-checkin", workoutId: completed?.id };
-  if (weeklyWeights < 2) return { ...base, nextBestAction: "Log body weight.", action: "log-weight" };
-  if (nearLevel) return { ...base, nextBestAction: `You are ${gamification.level.xpToNext} XP from Level ${gamification.level.level + 1}.`, action: "log-weight" };
-  return { ...base, nextBestAction: "Review progress.", action: "review-recap", workoutId: completed?.id };
+  if (isTrainingDay(scheduledDayKey) && !completed) return { ...base, nextBestAction: "Start Workout", action: "start-workout" };
+  if (!isTrainingDay(scheduledDayKey) && !completed?.restDay?.completed) return { ...base, nextBestAction: "Complete rest-day check-in.", action: "rest-checkin", workoutId: completed?.id };
+  if (weeklyWeights < 2 && !weightLoggedToday && !weightSkippedToday) return { ...base, nextBestAction: "Log Body Weight", action: "log-weight" };
+  if (nearLevel) return { ...base, nextBestAction: `You are ${gamification.level.xpToNext} XP from Level ${gamification.level.level + 1}.`, action: "progress" };
+  return { ...base, nextBestAction: "Review progress.", action: "progress", workoutId: completed?.id };
 }
 
-function nextFocusCue(data: AppData, date: string): string {
-  const dayKey = dayKeyForDate(date);
+function nextFocusCue(data: AppData, date: string, overrideDayKey?: DayKey): string {
+  const dayKey = overrideDayKey ?? dayKeyForDate(date);
   if (!isTrainingDay(dayKey)) return "Recovery check-in keeps the daily streak alive without extra lifting.";
   const workout = workoutDays[dayKey];
   const firstExercise = workout.exercises[0];

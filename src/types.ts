@@ -8,6 +8,8 @@ export type DayKey =
   | "sunday";
 
 export type ExerciseKind = "strength" | "timed" | "cardio" | "rest";
+export type ExerciseTrackingType = "weighted-reps" | "assistance-reps" | "bodyweight-reps" | "timed" | "cardio" | "rest-checkin";
+export type ProgramPhase = "setup" | "growth" | "push";
 export type LogStatus = "draft" | "completed";
 
 export interface SetTarget {
@@ -22,6 +24,7 @@ export interface Exercise {
   id: string;
   name: string;
   kind: ExerciseKind;
+  trackingType?: ExerciseTrackingType;
   sets?: number;
   reps?: string;
   seconds?: string;
@@ -29,8 +32,16 @@ export interface Exercise {
   target: string;
   notes: string;
   superset?: string;
+  supersetGroup?: string;
+  supersetLabel?: string;
   unilateral?: "side" | "leg";
   targetUnit?: "reps" | "seconds" | "minutes";
+  targetRIRByPhase?: Record<ProgramPhase, string>;
+  loadLabel?: string;
+  loadRequired?: boolean;
+  volumeMultiplier?: number;
+  prEligible?: boolean;
+  bodyweightOnly?: boolean;
   logHint?: string;
 }
 
@@ -90,6 +101,7 @@ export interface GamificationSettings {
   version: number;
   badgeUnlocks: Record<string, string>;
   seenRecaps: string[];
+  bodyWeightPromptSkips?: string[];
 }
 
 export interface SetLog {
@@ -128,6 +140,10 @@ export interface WorkoutLog {
   cycle?: number;
   weekInCycle?: number;
   dayKey: DayKey;
+  scheduledDayKey?: DayKey;
+  performedDayKey?: DayKey;
+  isScheduleOverride?: boolean;
+  scheduleOverrideReason?: string;
   workoutTitle: string;
   status: LogStatus;
   startedAt: string;
