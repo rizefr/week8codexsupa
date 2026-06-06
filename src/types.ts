@@ -11,6 +11,22 @@ export type ExerciseKind = "strength" | "timed" | "cardio" | "rest";
 export type ExerciseTrackingType = "weighted-reps" | "assistance-reps" | "bodyweight-reps" | "timed" | "cardio" | "rest-checkin";
 export type ProgramPhase = "setup" | "growth" | "push";
 export type LogStatus = "draft" | "completed";
+export type MuscleGroup =
+  | "lats"
+  | "upper-back"
+  | "upper-chest"
+  | "chest"
+  | "side-delts"
+  | "rear-delts"
+  | "front-delts"
+  | "biceps"
+  | "triceps"
+  | "forearms"
+  | "abs-core"
+  | "quads"
+  | "hamstrings"
+  | "glutes"
+  | "calves";
 
 export interface SetTarget {
   setNumber: number;
@@ -43,6 +59,10 @@ export interface Exercise {
   prEligible?: boolean;
   bodyweightOnly?: boolean;
   logHint?: string;
+  muscleGroups?: MuscleGroup[];
+  rirRequired?: boolean;
+  effortMode?: "rir" | "control" | "easy";
+  effortCue?: string;
 }
 
 export interface CardioBlock {
@@ -116,6 +136,7 @@ export interface SetLog {
   rir?: string;
   notes?: string;
   completed: boolean;
+  completionOverride?: "incomplete";
 }
 
 export interface ExerciseLog {

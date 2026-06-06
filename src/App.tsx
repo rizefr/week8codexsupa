@@ -22,7 +22,7 @@ import {
   Trash2,
   Weight,
 } from "./components/icons";
-import { progressionSections, ruleSections, tableSections, weeklySchedule, workoutDays } from "./data/routine";
+import { progressionSections, ruleSections, tableSections, trainingDayKeys, weeklySchedule, workoutDays } from "./data/routine";
 import { getCloudStatus, sendMagicLink, signOutCloud, syncCloudNow } from "./lib/cloud";
 import {
   AppData,
@@ -38,7 +38,9 @@ import {
 import { addDays, dayKeyForDate, formatDate, getCycleInfo, todayISO } from "./lib/date";
 import {
   allExercises,
+  autoCompletedSet,
   bodyWeightChange,
+  cardioInputsAreValid,
   completedExerciseCount,
   completedProgramWorkouts,
   completedSetCount,
@@ -48,6 +50,7 @@ import {
   createId,
   cycleWorkoutTarget,
   effectiveProgramStartDate,
+  effortLabelForExercise,
   exerciseNameForId,
   exerciseSessions,
   exerciseVolume,
@@ -67,6 +70,7 @@ import {
   progressMetricValue,
   progressionAdvice,
   refreshProgramFields,
+  rirRequiredForExercise,
   sevenDayAverage,
   shouldShowLoadInput,
   targetRIRForExercise,
@@ -79,9 +83,12 @@ import {
   workoutVolume,
 } from "./lib/progress";
 import {
+  createLocalBackup,
   defaultSettings,
   deleteWorkoutLog,
+  getLocalBackups,
   loadAppData,
+  LocalBackup,
   saveBodyWeightLog,
   saveAppData,
   saveSettings,
@@ -100,6 +107,7 @@ import {
   loggingQualityForWorkout,
   mergeGamificationSettings,
 } from "./lib/gamification";
+import { calculateMuscleProgress, muscleGroupOrder, muscleLabels, MuscleProgress, musclesForWorkout, weeklyMuscleFocus } from "./lib/muscles";
 
 type Page = "dashboard" | "today" | "routine" | "logger" | "recap" | "progress" | "weight" | "history" | "settings";
 type SaveState = "idle" | "saving" | "cloud" | "local" | "offline" | "syncIssue" | "notSignedIn";
@@ -133,6 +141,15 @@ const mobileMoreItems: { page: Page; label: string; icon: typeof Home }[] = [
 ];
 
 const mobileMorePages = mobileMoreItems.map((item) => item.page);
+
+const scheduleOverrideChoices: Array<{ dayKey: DayKey; label: string }> = [
+  { dayKey: "monday", label: "Monday: Upper A" },
+  { dayKey: "tuesday", label: "Tuesday: Lower + Abs" },
+  { dayKey: "wednesday", label: "Wednesday: Delts + Arms" },
+  { dayKey: "friday", label: "Friday: Upper B" },
+  { dayKey: "saturday", label: "Saturday: Specialization" },
+  { dayKey: "thursday", label: "Rest / Recovery Check-In" },
+];
 
 function parseRoute(): Route {
   const raw = window.location.hash.replace(/^#\/?/, "");
@@ -496,7 +513,7 @@ function App() {
     setSaveError("");
     setData((previous) => {
       const next = { ...previous, workoutLogs: previous.workoutLogs.filter((log) => log.id !== id) };
-      deleteWorkoutLog(id, next)
+      deleteWorkoutLog(id, previous)
         .then(applySaveResult)
         .catch((error) => {
           console.error("Workout delete failed.", error);
@@ -518,7 +535,7 @@ function App() {
       requestedDayLogs.find((item) => item.status === "draft") ??
       requestedDayLogs.find((item) => item.status === "completed") ??
       requestedDayLogs[0];
-    const log = requestedExisting ?? (!performedDayKey && existing) ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings, performedDayKey), data.workoutLogs);
+    const log = requestedExisting ?? (performedDayKey ? undefined : existing) ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings, performedDayKey), data.workoutLogs);
     if (!data.settings.startDate) {
       persistSettings(settings);
     }
@@ -577,6 +594,7 @@ function App() {
   };
 
   const repairGamification = () => {
+    createLocalBackup(data, "before-gamification-repair");
     const current = getGamificationSettings(data.settings);
     const summary = calculateGamification(data);
     const nextUnlocks = { ...current.badgeUnlocks };
@@ -680,6 +698,7 @@ function App() {
                 onRepairGamification={repairGamification}
                 onLoadDevSample={loadDevSampleData}
                 onImport={(importedData) => {
+                  createLocalBackup(data, "before-import");
                   const settings = { status: "active" as const, ...importedData.settings, updatedAt: new Date().toISOString() };
                   const startDate = effectiveProgramStartDate(settings, importedData.workoutLogs);
                   const normalized = {
@@ -854,8 +873,11 @@ function Dashboard({
           ? "Holding steady"
           : "Down from last session";
   const mission = buildTodayMission(data, cloudStatus.pendingSync);
+  const todayLog = data.workoutLogs.find((log) => log.date === today && (log.status === "draft" || log.status === "completed"));
   const draftLogs = data.workoutLogs.filter((log) => log.status === "draft").slice(0, 3);
   const heatPreview = gamification.activities.slice(-35);
+  const weeklyMuscleProgress = calculateMuscleProgress(data, gamification.prs);
+  const weeklyFocus = weeklyMuscleFocus(weeklyMuscleProgress);
   const handleMissionAction = () => {
     if (mission.action === "sync") onSyncNow();
     else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
@@ -890,6 +912,9 @@ function Dashboard({
                 <button className="secondary-action subtle" type="button" onClick={skipBodyWeightToday}>
                   Skip Weight Today
                 </button>
+              )}
+              {!todayLog && (
+                <ScheduleOverrideChooser onChoose={(day) => startWorkout(today, day)} compact />
               )}
             </div>
           </section>
@@ -971,6 +996,20 @@ function Dashboard({
                 items={gamification.recentBadges.map((badge) => badge.title)}
               />
             </article>
+          </section>
+
+          <section className="panel weekly-review-card">
+            <div className="section-heading">
+              <div><p className="eyebrow">Weekly review</p><h3>Execution at a glance</h3></div>
+              <button className="secondary-action" onClick={() => navigate("progress")}>Open progress</button>
+            </div>
+            <div className="focus-summary-grid">
+              <div><span>Workouts</span><strong>{weekCompleted}/{trainingDayKeys.length}</strong></div>
+              <div><span>Muscle focus</span><strong>{weeklyFocus.leading?.label ?? "Waiting for logs"}</strong></div>
+              <div><span>Recent PRs</span><strong>{gamification.prs.filter((pr) => pr.date >= addDays(today, -6)).length}</strong></div>
+              <div><span>Consistency</span><strong>{gamification.executionScore.consistency}/100</strong></div>
+            </div>
+            <p>{weeklyFocus.lightest?.score === 0 ? `${weeklyFocus.lightest.label} has no completed sets in the last 7 days. Let the scheduled workout address it.` : "Stay with the plan. Progress is coming from completed scheduled work, not extra volume."}</p>
           </section>
         </>
       ) : (
@@ -1082,14 +1121,6 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
   const dayKey = todayLog?.dayKey ?? scheduledDayKey;
   const workout = workoutDays[dayKey];
   const log = todayLog;
-  const overrideChoices: Array<{ dayKey: DayKey; label: string }> = [
-    { dayKey: "monday", label: "Monday: Upper A" },
-    { dayKey: "tuesday", label: "Tuesday: Lower + Abs" },
-    { dayKey: "wednesday", label: "Wednesday: Delts + Arms" },
-    { dayKey: "friday", label: "Friday: Upper B" },
-    { dayKey: "saturday", label: "Saturday: Specialization" },
-    { dayKey: "thursday", label: "Rest / Recovery Check-In" },
-  ];
   return (
     <div className="content-stack">
       <section className="panel today-panel">
@@ -1117,22 +1148,27 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
             </div>
           </div>
           <p className="muted-copy">This logs the selected routine day for today only. Tomorrow follows the normal calendar schedule.</p>
-          <div className="override-grid">
-            {overrideChoices.map((choice) => (
-              <button
-                key={choice.dayKey}
-                type="button"
-                className="secondary-action"
-                onClick={() => startWorkout(today, choice.dayKey)}
-              >
-                {choice.label}
-              </button>
-            ))}
-          </div>
+          <ScheduleOverrideChooser onChoose={(day) => startWorkout(today, day)} />
         </section>
       )}
       <WorkoutDayDetail dayKey={dayKey} compact={false} />
     </div>
+  );
+}
+
+function ScheduleOverrideChooser({ onChoose, compact = false }: { onChoose: (day: DayKey) => void; compact?: boolean }) {
+  return (
+    <details className={classNames("override-chooser", compact && "compact")}>
+      <summary>Do a Different Workout Today</summary>
+      <div className="override-grid">
+        {scheduleOverrideChoices.map((choice) => (
+          <button key={choice.dayKey} type="button" className="secondary-action" onClick={() => onChoose(choice.dayKey)}>
+            {choice.label}
+          </button>
+        ))}
+      </div>
+      <p>This changes today only. Tomorrow follows the normal calendar schedule.</p>
+    </details>
   );
 }
 
@@ -1237,10 +1273,12 @@ function RoutinePage() {
 }
 
 function rirSummary(exercise: Exercise): string {
+  const label = effortLabelForExercise(exercise);
   if (exercise.targetRIRByPhase) {
-    return `Target RIR setup ${exercise.targetRIRByPhase.setup} · growth ${exercise.targetRIRByPhase.growth} · push ${exercise.targetRIRByPhase.push}`;
+    if (label === "Control cue") return `${label}: ${exercise.effortCue ?? exercise.targetRIRByPhase.setup}`;
+    return `${label} setup ${exercise.targetRIRByPhase.setup} · growth ${exercise.targetRIRByPhase.growth} · push ${exercise.targetRIRByPhase.push}`;
   }
-  return `Target RIR ${targetRIRForExercise(exercise)}`;
+  return `${label} ${targetRIRForExercise(exercise)}`;
 }
 
 function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolean }) {
@@ -1282,6 +1320,7 @@ function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolea
                 </div>
                 {exercise.supersetLabel && <span className="superset-chip">{exercise.supersetLabel}</span>}
                 {!compact && <p>{exercise.notes}</p>}
+                {exercise.effortCue && exercise.effortMode !== "control" && <small>{exercise.effortCue}</small>}
                 {exercise.logHint && <small>{exercise.logHint}</small>}
               </div>
             </article>
@@ -1537,6 +1576,7 @@ function RecapPage({
       </section>
     );
   }
+  const trainedMuscles = musclesForWorkout(recap.log);
   return (
     <div className="content-stack">
       <section className="recap-hero">
@@ -1553,6 +1593,15 @@ function RecapPage({
         <StatCard icon={CheckCircle2} label="Logging quality" value={`${recap.loggingQuality}%`} detail="Set fields completed with valid values." />
         <StatCard icon={Flame} label="Streak status" value={recap.streakText} detail="Workout streak is separate from daily check-ins." />
       </section>
+
+      {!!trainedMuscles.length && (
+        <section className="panel recap-muscles">
+          <div className="section-heading"><div><p className="eyebrow">Body parts trained</p><h3>Workout contribution</h3></div></div>
+          <div className="muscle-chip-list">
+            {trainedMuscles.map((group) => <span key={group}>{muscleLabels[group]}</span>)}
+          </div>
+        </section>
+      )}
 
       <section className="game-grid two">
         <article className="panel">
@@ -1617,7 +1666,11 @@ function LogExerciseCard({
   const previous = exercise ? previousExercisePerformance(allLogs, log.date, exercise.name) : undefined;
 
   const updateSet = (setId: string, patch: Partial<SetLog>) => {
-    const sets = exerciseLog.sets.map((set) => (set.id === setId ? { ...set, ...patch } : set));
+    if (!exercise) return;
+    const sets = exerciseLog.sets.map((set) => {
+      if (set.id !== setId) return set;
+      return autoCompletedSet({ ...set, ...patch }, exercise);
+    });
     onChange({
       ...exerciseLog,
       sets,
@@ -1626,6 +1679,14 @@ function LogExerciseCard({
   };
 
   if (cardio) {
+    const updateCardio = (patch: Partial<NonNullable<ExerciseLog["cardio"]>>) => {
+      const nextCardio: NonNullable<ExerciseLog["cardio"]> = {
+        ...exerciseLog.cardio,
+        ...patch,
+        completed: cardioInputsAreValid(patch.duration ?? exerciseLog.cardio?.duration),
+      };
+      onChange({ ...exerciseLog, completed: nextCardio.completed, cardio: nextCardio });
+    };
     return (
       <section className="panel log-card cardio-log">
         <div className="log-card-heading">
@@ -1634,20 +1695,9 @@ function LogExerciseCard({
             <h3>{cardio.name}</h3>
             <p>{cardio.time} · {cardio.intensity}</p>
           </div>
-          <label className="complete-toggle">
-            <input
-              type="checkbox"
-              checked={!!exerciseLog.cardio?.completed}
-              onChange={(event) =>
-                onChange({
-                  ...exerciseLog,
-                  completed: event.target.checked,
-                  cardio: { ...exerciseLog.cardio, completed: event.target.checked },
-                })
-              }
-            />
-            Done
-          </label>
+          <span className={classNames("completion-state", exerciseLog.cardio?.completed && "complete")}>
+            {exerciseLog.cardio?.completed ? "Duration logged" : "Enter duration to complete"}
+          </span>
         </div>
         {cardio.notes && <div className="guidance-card">{cardio.notes}</div>}
         <div className="input-grid">
@@ -1655,19 +1705,19 @@ function LogExerciseCard({
             label="Duration"
             value={exerciseLog.cardio?.duration ?? ""}
             placeholder="min"
-            onChange={(value) => onChange({ ...exerciseLog, cardio: { ...exerciseLog.cardio, duration: value, completed: !!exerciseLog.cardio?.completed } })}
+            onChange={(value) => updateCardio({ duration: value })}
           />
           <NumberField
             label="Incline"
             value={exerciseLog.cardio?.incline ?? ""}
             placeholder="%"
-            onChange={(value) => onChange({ ...exerciseLog, cardio: { ...exerciseLog.cardio, incline: value, completed: !!exerciseLog.cardio?.completed } })}
+            onChange={(value) => updateCardio({ incline: value })}
           />
           <NumberField
             label="Speed"
             value={exerciseLog.cardio?.speed ?? ""}
             placeholder="mph"
-            onChange={(value) => onChange({ ...exerciseLog, cardio: { ...exerciseLog.cardio, speed: value, completed: !!exerciseLog.cardio?.completed } })}
+            onChange={(value) => updateCardio({ speed: value })}
           />
         </div>
         <label className="field-label">
@@ -1675,10 +1725,7 @@ function LogExerciseCard({
           <textarea
             value={exerciseLog.cardio?.intensityNotes ?? ""}
             onChange={(event) =>
-              onChange({
-                ...exerciseLog,
-                cardio: { ...exerciseLog.cardio, intensityNotes: event.target.value, completed: !!exerciseLog.cardio?.completed },
-              })
+              updateCardio({ intensityNotes: event.target.value })
             }
           />
         </label>
@@ -1691,14 +1738,16 @@ function LogExerciseCard({
   const showLoad = shouldShowLoadInput(exercise);
   const loadLabel = loadLabelForExercise(exercise);
   const rirTarget = targetRIRForExercise(exercise, log.weekInCycle);
+  const showRir = rirRequiredForExercise(exercise);
+  const effortLabel = effortLabelForExercise(exercise);
   const copyPreviousLoad = () => {
     if (!previous || !showLoad) return;
     onChange({
       ...exerciseLog,
-      sets: exerciseLog.sets.map((set, index) => ({
+      sets: exerciseLog.sets.map((set, index) => autoCompletedSet({
         ...set,
         weight: previous.exerciseLog.sets[index]?.weight ?? set.weight,
-      })),
+      }, exercise)),
     });
   };
 
@@ -1709,18 +1758,13 @@ function LogExerciseCard({
           <p className="eyebrow">{exercise.target}</p>
           <h3>{exercise.name}</h3>
           <p>
-            {exercise.sets} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest} · Target RIR {rirTarget}
+            {exercise.sets} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest} · {effortLabel} {rirTarget}
           </p>
           {exercise.supersetLabel && <span className="superset-chip">{exercise.supersetLabel}</span>}
         </div>
-        <label className="complete-toggle">
-          <input
-            type="checkbox"
-            checked={exerciseLog.completed}
-            onChange={(event) => onChange({ ...exerciseLog, completed: event.target.checked })}
-          />
-          Done
-        </label>
+        <span className={classNames("completion-state", exerciseLog.completed && "complete")}>
+          {exerciseLog.completed ? "All sets complete" : "Auto-completes from valid set data"}
+        </span>
       </div>
       <div className="guidance-card">{exercise.notes}</div>
       {exercise.logHint && <div className="guidance-card">{exercise.logHint}</div>}
@@ -1737,7 +1781,7 @@ function LogExerciseCard({
           )}
         </div>
       )}
-      <div className={classNames("set-table", !showLoad && "no-load", exercise.unilateral && "unilateral", trackingType === "timed" && "timed")}>
+      <div className={classNames("set-table", !showLoad && "no-load", !showRir && "no-rir", exercise.unilateral && "unilateral", trackingType === "timed" && "timed")}>
         <div className="set-row header">
           <span>Set</span>
           <span>Target</span>
@@ -1752,13 +1796,13 @@ function LogExerciseCard({
           ) : (
             <span>Reps</span>
           )}
-          <span>RIR</span>
-          <span>Done</span>
+          {showRir && <span>RIR</span>}
+          <span>Status</span>
         </div>
         {exerciseLog.sets.map((set) => (
           <div key={set.id} className="set-row">
             <div className="set-cell set-number"><span>Set</span><strong>{set.setNumber}</strong></div>
-            <div className="set-cell"><span>Target · RIR {targetRIRForSet(exercise, log.weekInCycle, set.setNumber)}</span><strong>{set.target}</strong></div>
+            <div className="set-cell"><span>Target · {showRir ? `RIR ${targetRIRForSet(exercise, log.weekInCycle, set.setNumber)}` : rirTarget}</span><strong>{set.target}</strong></div>
             {showLoad && (
               <label className="set-cell">
                 <span>{loadLabel}</span>
@@ -1787,19 +1831,24 @@ function LogExerciseCard({
                 <input value={set.reps ?? ""} onChange={(event) => updateSet(set.id, { reps: event.target.value })} inputMode="numeric" placeholder="reps" />
               </label>
             )}
-            <label className="set-cell">
-              <span>RIR</span>
-              <input value={set.rir ?? ""} onChange={(event) => updateSet(set.id, { rir: event.target.value })} inputMode="decimal" placeholder="RIR" />
-            </label>
-            <label className="set-cell done-cell">
-              <span>Done</span>
-              <input
-                type="checkbox"
-                checked={set.completed}
-                onChange={(event) => updateSet(set.id, { completed: event.target.checked })}
-                aria-label={`Set ${set.setNumber} completed`}
-              />
-            </label>
+            {showRir && (
+              <label className="set-cell">
+                <span>RIR</span>
+                <input value={set.rir ?? ""} onChange={(event) => updateSet(set.id, { rir: event.target.value })} inputMode="decimal" placeholder="RIR" />
+              </label>
+            )}
+            <div className="set-cell completion-cell">
+              <span>Status</span>
+              <button
+                type="button"
+                className={classNames("set-completion-button", set.completed && "complete", set.completionOverride && "overridden")}
+                onClick={() => updateSet(set.id, { completionOverride: set.completionOverride ? undefined : "incomplete" })}
+                disabled={!set.completed && !set.completionOverride}
+                aria-label={set.completed ? `Mark set ${set.setNumber} incomplete` : set.completionOverride ? `Restore automatic completion for set ${set.setNumber}` : `Set ${set.setNumber} is incomplete`}
+              >
+                {set.completed ? "Complete" : set.completionOverride ? "Use auto" : "Incomplete"}
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -1835,14 +1884,67 @@ function NumberField({
   );
 }
 
+function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 days", compact = false }: { progress: MuscleProgress[]; title?: string; rangeLabel?: string; compact?: boolean }) {
+  const firstActive = progress.find((item) => item.score > 0) ?? progress[0];
+  const [selectedGroup, setSelectedGroup] = useState(firstActive?.group);
+  const byGroup = new Map(progress.map((item) => [item.group, item]));
+  const selected = selectedGroup ? byGroup.get(selectedGroup) : undefined;
+  const zoneClass = (group: typeof muscleGroupOrder[number]) => classNames(
+    "muscle-zone",
+    `intensity-${byGroup.get(group)?.intensity ?? 0}`,
+    selectedGroup === group && "selected",
+  );
+  return (
+    <section className={classNames("panel muscle-map-panel", compact && "compact")}>
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">{rangeLabel}</p>
+          <h2>{title}</h2>
+        </div>
+        <div className="muscle-legend" aria-label="Muscle activity intensity legend">
+          <span>Low</span><i className="intensity-1" /><i className="intensity-2" /><i className="intensity-3" /><i className="intensity-4" /><span>High</span>
+        </div>
+      </div>
+      <div className="muscle-map-layout">
+        <div className="body-map" aria-hidden="true">
+          <div><span>Front</span><svg viewBox="0 0 150 320"><circle className="body-outline" cx="75" cy="26" r="18"/><path className="body-outline" d="M54 48 Q75 40 96 48 L111 128 L101 190 L96 298 L76 298 L75 196 L74 298 L54 298 L49 190 L39 128 Z"/><ellipse className={zoneClass("front-delts")} cx="48" cy="67" rx="13" ry="11"/><ellipse className={zoneClass("front-delts")} cx="102" cy="67" rx="13" ry="11"/><rect className={zoneClass("upper-chest")} x="57" y="56" width="36" height="13" rx="6"/><rect className={zoneClass("chest")} x="55" y="70" width="40" height="25" rx="10"/><ellipse className={zoneClass("side-delts")} cx="39" cy="70" rx="8" ry="15"/><ellipse className={zoneClass("side-delts")} cx="111" cy="70" rx="8" ry="15"/><ellipse className={zoneClass("biceps")} cx="35" cy="101" rx="7" ry="19"/><ellipse className={zoneClass("biceps")} cx="115" cy="101" rx="7" ry="19"/><rect className={zoneClass("forearms")} x="25" y="120" width="10" height="42" rx="5"/><rect className={zoneClass("forearms")} x="115" y="120" width="10" height="42" rx="5"/><rect className={zoneClass("abs-core")} x="61" y="101" width="28" height="64" rx="9"/><rect className={zoneClass("quads")} x="51" y="184" width="20" height="64" rx="10"/><rect className={zoneClass("quads")} x="79" y="184" width="20" height="64" rx="10"/><rect className={zoneClass("calves")} x="53" y="251" width="16" height="42" rx="8"/><rect className={zoneClass("calves")} x="81" y="251" width="16" height="42" rx="8"/></svg></div>
+          <div><span>Back</span><svg viewBox="0 0 150 320"><circle className="body-outline" cx="75" cy="26" r="18"/><path className="body-outline" d="M54 48 Q75 40 96 48 L111 128 L101 190 L96 298 L76 298 L75 196 L74 298 L54 298 L49 190 L39 128 Z"/><rect className={zoneClass("upper-back")} x="56" y="52" width="38" height="36" rx="10"/><path className={zoneClass("lats")} d="M50 82 Q61 91 63 139 L48 151 L42 93 Z"/><path className={zoneClass("lats")} d="M100 82 Q89 91 87 139 L102 151 L108 93 Z"/><ellipse className={zoneClass("rear-delts")} cx="42" cy="68" rx="11" ry="12"/><ellipse className={zoneClass("rear-delts")} cx="108" cy="68" rx="11" ry="12"/><ellipse className={zoneClass("triceps")} cx="34" cy="104" rx="7" ry="20"/><ellipse className={zoneClass("triceps")} cx="116" cy="104" rx="7" ry="20"/><rect className={zoneClass("glutes")} x="53" y="164" width="44" height="31" rx="13"/><rect className={zoneClass("hamstrings")} x="51" y="197" width="20" height="52" rx="10"/><rect className={zoneClass("hamstrings")} x="79" y="197" width="20" height="52" rx="10"/><rect className={zoneClass("calves")} x="53" y="251" width="16" height="42" rx="8"/><rect className={zoneClass("calves")} x="81" y="251" width="16" height="42" rx="8"/></svg></div>
+        </div>
+        <div className="muscle-map-details">
+          <div className="muscle-picker" role="list" aria-label="Muscle groups">
+            {progress.map((item) => (
+              <button key={item.group} className={classNames(`intensity-${item.intensity}`, selectedGroup === item.group && "selected")} onClick={() => setSelectedGroup(item.group)}>
+                <span>{item.label}</span><strong>{item.sets}</strong>
+              </button>
+            ))}
+          </div>
+          {selected && (
+            <div className="muscle-detail-card" aria-live="polite">
+              <p className="eyebrow">{selected.trend}</p>
+              <h3>{selected.label}</h3>
+              <p>{selected.sets} completed sets · {selected.prCount} recent PR{selected.prCount === 1 ? "" : "s"} · {selected.completedWorkouts} workout{selected.completedWorkouts === 1 ? "" : "s"}</p>
+              <span>{selected.exercises.length ? selected.exercises.join(" · ") : "No completed exercise for this muscle in the selected range."}</span>
+              <strong>{selected.nextTarget}</strong>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppData; gamification: GamificationSummary; gamificationEnabled: boolean }) {
   const exerciseNames = useMemo(() => Array.from(new Set(allExercises.map((exercise) => exercise.name))).sort(), []);
   const [selectedExercise, setSelectedExercise] = useState(exerciseNames[0] ?? "");
   const [range, setRange] = useState<"week" | "cycle" | "last8" | "all">("cycle");
+  const [muscleRange, setMuscleRange] = useState<"week" | "cycle">("week");
   const today = todayISO();
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
   const progressSettings = { ...data.settings, startDate };
   const cycleInfo = getCycleInfo(startDate, today);
+  const muscleFromDate = muscleRange === "week" ? addDays(today, -6) : addDays(startDate, (cycleInfo.cycle - 1) * 56);
+  const muscleProgress = calculateMuscleProgress(data, gamification.prs, muscleFromDate, today);
+  const muscleFocus = weeklyMuscleFocus(calculateMuscleProgress(data, gamification.prs));
   const filteredLogs = data.workoutLogs.filter((log) => {
     if (range === "all") return true;
     if (range === "cycle") return (log.cycle ?? Math.floor((log.week - 1) / 8) + 1) === cycleInfo.cycle;
@@ -1914,6 +2016,27 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
               </div>
             </div>
             <HeatMap activities={gamification.activities} />
+          </section>
+
+          <div className="visual-section-toolbar">
+            <span>Muscle progress range</span>
+            <div className="segmented-control">
+              <button className={muscleRange === "week" ? "active" : ""} onClick={() => setMuscleRange("week")}>Last 7 Days</button>
+              <button className={muscleRange === "cycle" ? "active" : ""} onClick={() => setMuscleRange("cycle")}>Current Cycle</button>
+            </div>
+          </div>
+          <MuscleMapPanel progress={muscleProgress} rangeLabel={muscleRange === "week" ? "Last 7 days" : `Cycle ${cycleInfo.cycle}`} />
+
+          <section className="panel weekly-focus-card">
+            <div className="section-heading">
+              <div><p className="eyebrow">Weekly muscle focus</p><h3>Where the work is landing</h3></div>
+            </div>
+            <div className="focus-summary-grid">
+              <div><span>Leading</span><strong>{muscleFocus.leading?.label ?? "No data"}</strong></div>
+              <div><span>Also strong</span><strong>{muscleFocus.secondary?.label ?? "No data"}</strong></div>
+              <div><span>Light this week</span><strong>{muscleFocus.lightest?.label ?? "No data"}</strong></div>
+            </div>
+            <p>{muscleFocus.leading ? `${muscleFocus.leading.label} leads with ${muscleFocus.leading.sets} completed sets. Keep the routine order; the light area should be addressed by its scheduled day, not extra volume.` : "Complete a workout to populate the weekly muscle view."}</p>
           </section>
 
           <section className="game-grid two">
@@ -2399,6 +2522,7 @@ function SettingsPage({
   const [email, setEmail] = useState("");
   const [cloudMessage, setCloudMessage] = useState("");
   const [cloudBusy, setCloudBusy] = useState(false);
+  const [localBackups, setLocalBackups] = useState<LocalBackup[]>(() => getLocalBackups());
   const localDataExists = data.workoutLogs.length > 0 || data.bodyWeights.length > 0;
   const gamification = getGamificationSettings(settings);
   const isLocalDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
@@ -2426,14 +2550,31 @@ function SettingsPage({
     refreshCloudStatus();
   };
 
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const downloadJson = (payload: unknown, filename: string) => {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `training-dashboard-backup-${todayISO()}.json`;
+    link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const exportData = () => downloadJson(data, `training-dashboard-backup-${todayISO()}.json`);
+
+  const createBackupNow = () => {
+    const backup = createLocalBackup(data, "manual");
+    setLocalBackups(getLocalBackups());
+    setCloudMessage(backup ? "Local safety snapshot created." : "Backup could not be created. Export JSON instead.");
+  };
+
+  const exportLatestBackup = () => {
+    const latest = getLocalBackups()[0];
+    if (!latest) {
+      setCloudMessage("Create a local backup first.");
+      return;
+    }
+    downloadJson(latest.data, `eli-cycle-tracker-snapshot-${latest.createdAt.slice(0, 10)}.json`);
   };
 
   const importData = async (file?: File) => {
@@ -2550,6 +2691,7 @@ function SettingsPage({
         <div className="settings-actions">
           <button className="secondary-action" type="button" onClick={() => {
             onRepairGamification();
+            setLocalBackups(getLocalBackups());
             setCloudMessage("Gamification stats repaired from existing workout and body weight logs.");
           }}>
             Repair / Recalculate Gamification
@@ -2629,6 +2771,12 @@ function SettingsPage({
           </div>
         </div>
         <div className="settings-actions">
+          <button className="secondary-action" type="button" onClick={createBackupNow}>
+            Create Backup Now
+          </button>
+          <button className="secondary-action" type="button" onClick={exportLatestBackup}>
+            Export Latest Snapshot
+          </button>
           <button className="secondary-action" type="button" onClick={exportData}>
             Export JSON
           </button>
@@ -2637,6 +2785,11 @@ function SettingsPage({
             <input type="file" accept="application/json" onChange={(event) => importData(event.target.files?.[0])} />
           </label>
         </div>
+        <p className="backup-status">
+          {localBackups[0]
+            ? `Last local backup: ${new Date(localBackups[0].createdAt).toLocaleString()} · ${localBackups[0].reason} · ${localBackups.length} snapshot${localBackups.length === 1 ? "" : "s"} retained`
+            : "No local safety snapshot yet. Full JSON export remains available."}
+        </p>
       </section>
     </div>
   );

@@ -1,22 +1,55 @@
-import { DayKey, Exercise, RuleSection, TableSection, WorkoutDay } from "../types";
+import { DayKey, Exercise, MuscleGroup, RuleSection, TableSection, WorkoutDay } from "../types";
 
-const e = (exercise: Exercise): Exercise => exercise;
+const muscleAliases: Array<[RegExp, MuscleGroup[]]> = [
+  [/upper chest/i, ["upper-chest"]],
+  [/upper back/i, ["upper-back"]],
+  [/side delts/i, ["side-delts"]],
+  [/rear delts/i, ["rear-delts"]],
+  [/front delts/i, ["front-delts"]],
+  [/deep core|bracing|abs/i, ["abs-core"]],
+  [/brachialis/i, ["biceps", "forearms"]],
+  [/forearms/i, ["forearms"]],
+  [/hamstrings/i, ["hamstrings"]],
+  [/triceps/i, ["triceps"]],
+  [/biceps/i, ["biceps"]],
+  [/calves/i, ["calves"]],
+  [/quads/i, ["quads"]],
+  [/glutes/i, ["glutes"]],
+  [/lats/i, ["lats"]],
+  [/chest/i, ["chest"]],
+  [/serratus/i, ["abs-core"]],
+];
+
+function inferMuscleGroups(target: string): MuscleGroup[] {
+  const groups = new Set<MuscleGroup>();
+  muscleAliases.forEach(([pattern, matches]) => {
+    if (pattern.test(target)) matches.forEach((group) => groups.add(group));
+  });
+  return Array.from(groups);
+}
+
+const e = (exercise: Exercise): Exercise => ({
+  ...exercise,
+  muscleGroups: exercise.muscleGroups ?? inferMuscleGroups(exercise.target),
+});
 
 // Future routine edits should update exercise metadata here so logger fields,
 // trend labels, PR logic, and RIR guidance adapt without scattered UI changes.
 const rir = {
   compound: { setup: "2", growth: "1-2", push: "1" },
+  cautiousCompound: { setup: "2", growth: "2", push: "1-2" },
   isolation: { setup: "1-2", growth: "1-2; final set 0-1", push: "0-1 final set" },
+  jointSensitiveIsolation: { setup: "2", growth: "1-2", push: "1" },
   pump: { setup: "2", growth: "1-2", push: "1-2 controlled" },
   core: { setup: "Stop when control breaks", growth: "Stop when control breaks", push: "Stop when control breaks" },
 } as const;
 
-const dbWeighted = { trackingType: "weighted-reps", loadLabel: "Weight (lb per DB)", loadRequired: true, targetRIRByPhase: rir.compound, prEligible: true } as const;
-const dbIsolation = { trackingType: "weighted-reps", loadLabel: "Weight (lb per DB)", loadRequired: true, targetRIRByPhase: rir.isolation, prEligible: true } as const;
-const dbPump = { trackingType: "weighted-reps", loadLabel: "Weight (lb per DB)", loadRequired: true, targetRIRByPhase: rir.pump, prEligible: true } as const;
-const assisted = { trackingType: "assistance-reps", loadLabel: "Assistance (lb)", loadRequired: true, targetRIRByPhase: rir.compound, prEligible: true } as const;
-const bodyweight = { trackingType: "bodyweight-reps", loadRequired: false, bodyweightOnly: true, targetRIRByPhase: rir.core, prEligible: true } as const;
-const timedCore = { trackingType: "timed", loadRequired: false, bodyweightOnly: true, targetRIRByPhase: rir.core, prEligible: true } as const;
+const dbWeighted = { trackingType: "weighted-reps", loadLabel: "Weight (lb per DB)", loadRequired: true, targetRIRByPhase: rir.compound, rirRequired: true, effortMode: "rir", prEligible: true } as const;
+const dbIsolation = { trackingType: "weighted-reps", loadLabel: "Weight (lb per DB)", loadRequired: true, targetRIRByPhase: rir.isolation, rirRequired: true, effortMode: "rir", prEligible: true } as const;
+const dbPump = { trackingType: "weighted-reps", loadLabel: "Weight (lb per DB)", loadRequired: true, targetRIRByPhase: rir.pump, rirRequired: true, effortMode: "rir", prEligible: true } as const;
+const assisted = { trackingType: "assistance-reps", loadLabel: "Assistance (lb)", loadRequired: true, targetRIRByPhase: rir.compound, rirRequired: true, effortMode: "rir", prEligible: true } as const;
+const bodyweight = { trackingType: "bodyweight-reps", loadRequired: false, bodyweightOnly: true, targetRIRByPhase: rir.core, rirRequired: false, effortMode: "control", effortCue: "Stop when control breaks", prEligible: true } as const;
+const timedCore = { trackingType: "timed", loadRequired: false, bodyweightOnly: true, targetRIRByPhase: rir.core, rirRequired: false, effortMode: "control", effortCue: "Stop when control breaks", prEligible: true } as const;
 
 export const weeklySchedule: { day: string; key: DayKey; workout: string }[] = [
   { day: "Monday", key: "monday", workout: "Upper A: Lats + Upper Chest + Side Delts" },
@@ -125,6 +158,8 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         name: "DB Bulgarian Split Squat",
         kind: "strength",
         ...dbWeighted,
+        targetRIRByPhase: rir.cautiousCompound,
+        effortCue: "Keep the bottom controlled; no grinding or balance breakdown.",
         sets: 3,
         reps: "8-12/leg",
         rest: "2-3 min",
@@ -137,6 +172,8 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         name: "DB Romanian Deadlift",
         kind: "strength",
         ...dbWeighted,
+        targetRIRByPhase: rir.cautiousCompound,
+        effortCue: "End the set before position or hamstring control changes.",
         sets: 3,
         reps: "8-12",
         rest: "2-3 min",
@@ -234,6 +271,9 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         name: "Standing DB Shoulder Press",
         kind: "strength",
         ...dbWeighted,
+        targetRIRByPhase: rir.cautiousCompound,
+        effortCue: "Stop before back arch or pressing path becomes unstable.",
+        muscleGroups: ["front-delts", "triceps"],
         sets: 2,
         reps: "6-10",
         rest: "2 min",
@@ -267,6 +307,8 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         name: "Standing DB Overhead Triceps Extension",
         kind: "strength",
         ...dbIsolation,
+        targetRIRByPhase: rir.jointSensitiveIsolation,
+        effortCue: "Keep the elbow stretch pain-free; technical failure only.",
         sets: 3,
         reps: "10-15",
         rest: "90 sec",
@@ -356,6 +398,8 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         name: "Assisted Dip, Chest/Triceps Bias",
         kind: "strength",
         ...assisted,
+        targetRIRByPhase: rir.cautiousCompound,
+        effortCue: "Stop before shoulder irritation or depth changes.",
         sets: 2,
         reps: "8-12",
         rest: "2 min",
@@ -367,6 +411,8 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         name: "DB Pullover",
         kind: "strength",
         ...dbWeighted,
+        targetRIRByPhase: rir.cautiousCompound,
+        effortCue: "Use only a pain-free stretch and keep the ribs controlled.",
         sets: 2,
         reps: "10-15",
         rest: "90 sec",
@@ -483,6 +529,9 @@ export const workoutDays: Record<DayKey, WorkoutDay> = {
         kind: "strength",
         ...bodyweight,
         targetRIRByPhase: rir.pump,
+        rirRequired: true,
+        effortMode: "rir",
+        effortCue: "Keep 1-2 clean reps in reserve; this is pump work, not a max set.",
         sets: 2,
         reps: "12-20",
         rest: "60-90 sec after 4B",

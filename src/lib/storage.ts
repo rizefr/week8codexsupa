@@ -19,6 +19,9 @@ const DB_NAME = "chad-aesthetic-dashboard";
 const DB_VERSION = 1;
 const SETTINGS_KEY = "program-settings";
 const FALLBACK_KEY = "chad-aesthetic-dashboard:fallback";
+const BACKUP_KEY = "chad-aesthetic-dashboard:backups:v1";
+const MAX_LOCAL_BACKUPS = 5;
+const MAX_BACKUP_BYTES = 1_500_000;
 
 const defaultSettings: ProgramSettings = {
   startDate: "",
@@ -36,6 +39,54 @@ export type SaveResult = {
   signedIn: boolean;
   error?: string;
 };
+
+export type LocalBackup = {
+  id: string;
+  createdAt: string;
+  reason: string;
+  data: AppData;
+};
+
+function readLocalBackups(): LocalBackup[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(BACKUP_KEY) ?? "[]") as LocalBackup[];
+    return Array.isArray(parsed) ? parsed.filter((backup) => backup?.data && backup.createdAt) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function getLocalBackups(): LocalBackup[] {
+  return readLocalBackups().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function createLocalBackup(data: AppData, reason = "manual"): LocalBackup | null {
+  const backup: LocalBackup = {
+    id: `backup-${Date.now().toString(36)}`,
+    createdAt: new Date().toISOString(),
+    reason,
+    data,
+  };
+  try {
+    if (JSON.stringify(backup).length > MAX_BACKUP_BYTES) {
+      console.warn("Local backup skipped because the snapshot exceeds the safe localStorage size limit.");
+      return null;
+    }
+    const next = [backup, ...getLocalBackups()].slice(0, MAX_LOCAL_BACKUPS);
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(next));
+    return backup;
+  } catch (error) {
+    console.error("Local backup snapshot failed.", error);
+    return null;
+  }
+}
+
+function maybeCreateMergeBackup(data: AppData): void {
+  if (!data.workoutLogs.length && !data.bodyWeights.length && !data.settings.startDate) return;
+  const latest = getLocalBackups()[0];
+  if (latest && Date.now() - Date.parse(latest.createdAt) < 24 * 60 * 60 * 1000) return;
+  createLocalBackup(data, "before-cloud-merge");
+}
 
 function resultFromCloudSuccess(): SaveResult {
   const status = getCloudStatus();
@@ -231,6 +282,7 @@ export async function loadAppData(): Promise<AppData> {
   const localData = normalizeProgramFields(await loadLocalData());
   const cloudResult = await loadCloudData();
   if (!cloudResult) return localData;
+  maybeCreateMergeBackup(localData);
   const deletedIds = new Set(getQueuedCloudDeleteIds());
   const cloudSettings = normalizeSettings(cloudResult.data.settings);
   const selectedSettings = cloudResult.hasSettings && (cloudSettings.startDate || !localData.settings.startDate)
@@ -324,6 +376,7 @@ export async function saveBodyWeightLog(log: BodyWeightLog, snapshot: AppData): 
 }
 
 export async function deleteWorkoutLog(id: string, snapshot: AppData): Promise<SaveResult> {
+  createLocalBackup(snapshot, "before-workout-delete");
   const next = { ...snapshot, workoutLogs: snapshot.workoutLogs.filter((item) => item.id !== id) };
   saveFallback(next);
   if ("indexedDB" in window) {

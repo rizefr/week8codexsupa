@@ -11,13 +11,12 @@ import {
   exerciseVolume,
   findExercise,
   isTrainingDay,
-  loadRequiredForExercise,
+  setInputsAreValid,
   totalRepsForExerciseLog,
   totalSecondsForExerciseLog,
   trackingTypeForExercise,
   validLoadValue,
   validRepValue,
-  validRirValue,
   validSecondValue,
   workoutVolume,
 } from "./progress";
@@ -218,16 +217,8 @@ export function normalizedExerciseName(name: string): string {
     .trim();
 }
 
-function setHasValidReps(set: SetLog, exercise: Exercise): boolean {
-  if (trackingTypeForExercise(exercise) === "timed") return validSecondValue(set.seconds) > 0;
-  if (exercise.unilateral) return validRepValue(set.leftReps) > 0 && validRepValue(set.rightReps) > 0;
-  return validRepValue(set.reps) > 0;
-}
-
 function setIsFullyLogged(set: SetLog, exercise: Exercise): boolean {
-  if (!set.completed || !setHasValidReps(set, exercise)) return false;
-  if (loadRequiredForExercise(exercise) && !validLoadValue(set.weight)) return false;
-  return validRirValue(set.rir);
+  return set.completed && setInputsAreValid(set, exercise);
 }
 
 function exerciseLogFullyLogged(log: ExerciseLog): boolean {

@@ -73,6 +73,21 @@ export function loadRequiredForExercise(exercise?: Exercise): boolean {
   return shouldShowLoadInput(exercise) && exercise?.loadRequired !== false;
 }
 
+export function rirRequiredForExercise(exercise?: Exercise): boolean {
+  if (!exercise) return true;
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "cardio" || trackingType === "rest-checkin") return false;
+  if (exercise.rirRequired !== undefined) return exercise.rirRequired;
+  return trackingType !== "timed";
+}
+
+export function effortLabelForExercise(exercise?: Exercise): string {
+  if (!exercise) return "Target RIR";
+  if (exercise.effortMode === "control" || !rirRequiredForExercise(exercise)) return "Control cue";
+  if (exercise.effortMode === "easy") return "Effort target";
+  return "Target RIR";
+}
+
 export function loadIsAssistance(exercise?: Exercise): boolean {
   return trackingTypeForExercise(exercise) === "assistance-reps";
 }
@@ -96,6 +111,31 @@ export function validRirValue(value?: string): boolean {
   if (!value) return false;
   const parsed = numericValue(value);
   return parsed >= 0 && parsed <= 10;
+}
+
+export function setInputsAreValid(set: SetLog, exercise: Exercise): boolean {
+  const trackingType = trackingTypeForExercise(exercise);
+  const performanceValid = trackingType === "timed"
+    ? validSecondValue(set.seconds) > 0
+    : exercise.unilateral
+      ? validRepValue(set.leftReps) > 0 && validRepValue(set.rightReps) > 0
+      : validRepValue(set.reps) > 0;
+  if (!performanceValid) return false;
+  if (loadRequiredForExercise(exercise) && !validLoadValue(set.weight)) return false;
+  if (rirRequiredForExercise(exercise) && !validRirValue(set.rir)) return false;
+  return true;
+}
+
+export function autoCompletedSet(set: SetLog, exercise: Exercise): SetLog {
+  return {
+    ...set,
+    completed: set.completionOverride !== "incomplete" && setInputsAreValid(set, exercise),
+  };
+}
+
+export function cardioInputsAreValid(duration?: string): boolean {
+  const value = numericValue(duration);
+  return value > 0 && value <= 600;
 }
 
 export function exerciseNameForId(exerciseId: string): string {
