@@ -461,7 +461,31 @@ input[type="checkbox"] {
   color: #9eb0c9;
 }
 
-.anatomy-view svg {
+.anatomy-canvas {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 240 / 520;
+  overflow: hidden;
+}
+
+.anatomy-canvas > img {
+  position: absolute;
+  z-index: 0;
+  width: 210%;
+  max-width: none;
+  height: auto;
+  top: 0;
+  left: -55%;
+  opacity: 0.3;
+  filter: invert(1) grayscale(1) contrast(1.35) brightness(0.82);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  user-select: none;
+}
+
+.anatomy-canvas svg {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-height: 520px;
   overflow: visible;
@@ -469,6 +493,7 @@ input[type="checkbox"] {
 }
 
 .anatomy-silhouette {
+  fill: rgba(8, 14, 23, 0.3);
   stroke: rgba(174, 194, 220, 0.42);
   stroke-width: 1.5;
   pointer-events: none;
@@ -2161,7 +2186,7 @@ tr:last-child td {
     max-width: 390px;
   }
 
-  .anatomy-view svg {
+  .anatomy-canvas svg {
     max-height: 390px;
   }
 

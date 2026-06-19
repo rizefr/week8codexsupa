@@ -1946,7 +1946,9 @@ function AnatomyFigure({
   return (
     <div className="anatomy-view">
       <span>{view === "front" ? "Anterior" : "Posterior"}</span>
-      <svg viewBox="0 0 240 520" role="img" aria-labelledby={`${view}-body-title ${view}-body-desc`}>
+      <div className="anatomy-canvas">
+        <img src={`./src/assets/anatomy-${view}.webp`} alt="" aria-hidden="true" decoding="async" />
+        <svg viewBox="0 0 240 520" role="img" aria-labelledby={`${view}-body-title ${view}-body-desc`}>
         <title id={`${view}-body-title`}>{view === "front" ? "Front" : "Back"} muscle stimulus map</title>
         <desc id={`${view}-body-desc`}>Select a muscle region to inspect completed sets, exercise sources, personal records, and the next useful focus.</desc>
         <defs>
@@ -1987,7 +1989,8 @@ function AnatomyFigure({
             {region("calves", <><path d="M77 407 C89 397 105 407 106 432 L98 481 C88 493 76 478 76 452 Z"/><path d="M179 407 C167 397 151 407 150 432 L158 481 C168 493 180 478 180 452 Z"/></>)}
           </>
         )}
-      </svg>
+        </svg>
+      </div>
     </div>
   );
 }

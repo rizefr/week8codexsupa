@@ -51,7 +51,7 @@ async function buildSource() {
     files.map(async (file) => {
       const relative = path.relative(srcDir, file);
       const extension = path.extname(file);
-      if (extension === ".css") {
+      if ([".css", ".png", ".svg", ".jpg", ".jpeg", ".webp"].includes(extension)) {
         await copyFile(file, path.join(distSrcDir, relative));
         return;
       }
