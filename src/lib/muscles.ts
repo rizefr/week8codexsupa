@@ -1,4 +1,4 @@
-import { AppData, MuscleGroup, WorkoutLog } from "../types";
+import { AppData, Exercise, MuscleGroup, WorkoutLog } from "../types";
 import type { PRRecord } from "./gamification";
 import { canonicalWorkoutLogs } from "./gamification";
 import { addDays, todayISO } from "./date";
@@ -24,15 +24,47 @@ export const muscleLabels: Record<MuscleGroup, string> = {
 
 export const muscleGroupOrder = Object.keys(muscleLabels) as MuscleGroup[];
 
+const targetTerms: Record<MuscleGroup, string[]> = {
+  lats: ["lats", "lat"],
+  "upper-back": ["upper back"],
+  "upper-chest": ["upper chest"],
+  chest: ["chest"],
+  "side-delts": ["side delts", "side delt"],
+  "rear-delts": ["rear delts", "rear delt"],
+  "front-delts": ["front delts", "front delt", "delts"],
+  biceps: ["biceps"],
+  triceps: ["triceps"],
+  forearms: ["forearms", "forearm"],
+  "abs-core": ["abs", "core"],
+  quads: ["quads", "quad"],
+  hamstrings: ["hamstrings", "hamstring"],
+  glutes: ["glutes", "glute"],
+  calves: ["calves", "calf"],
+};
+
+function primaryMuscleForExercise(exercise: Exercise): MuscleGroup | undefined {
+  const target = exercise.target.toLowerCase();
+  const ranked = (exercise.muscleGroups ?? []).map((group) => ({
+    group,
+    index: Math.min(...targetTerms[group].map((term) => {
+      const position = target.indexOf(term);
+      return position < 0 ? Number.POSITIVE_INFINITY : position;
+    })),
+  })).sort((a, b) => a.index - b.index);
+  return ranked.find((item) => Number.isFinite(item.index))?.group ?? exercise.muscleGroups?.[0];
+}
+
 export type MuscleProgress = {
   group: MuscleGroup;
   label: string;
   sets: number;
+  stimulusPoints: number;
   prCount: number;
   completedWorkouts: number;
   score: number;
   intensity: 0 | 1 | 2 | 3 | 4;
   exercises: string[];
+  recentPRs: string[];
   trend: "No recent work" | "Light" | "On track" | "High" | "Standout";
   nextTarget: string;
 };
@@ -49,8 +81,8 @@ export function calculateMuscleProgress(
   fromDate = addDays(todayISO(), -6),
   toDate = todayISO(),
 ): MuscleProgress[] {
-  const records = new Map<MuscleGroup, { sets: number; prs: number; workouts: Set<string>; exercises: Set<string> }>();
-  muscleGroupOrder.forEach((group) => records.set(group, { sets: 0, prs: 0, workouts: new Set(), exercises: new Set() }));
+  const records = new Map<MuscleGroup, { sets: number; stimulus: number; prs: string[]; workouts: Set<string>; exercises: Set<string> }>();
+  muscleGroupOrder.forEach((group) => records.set(group, { sets: 0, stimulus: 0, prs: [], workouts: new Set(), exercises: new Set() }));
 
   canonicalCompletedLogs(data.workoutLogs, fromDate, toDate).forEach((log) => {
     log.exerciseLogs.forEach((exerciseLog) => {
@@ -58,9 +90,11 @@ export function calculateMuscleProgress(
       if (!exercise?.muscleGroups?.length) return;
       const completedSets = exerciseLog.sets.filter((set) => set.completed).length;
       if (!completedSets && !exerciseLog.completed) return;
+      const primaryMuscle = primaryMuscleForExercise(exercise);
       exercise.muscleGroups.forEach((group) => {
         const record = records.get(group)!;
         record.sets += completedSets;
+        record.stimulus += completedSets * (group === primaryMuscle ? 1 : 0.5);
         record.workouts.add(log.id);
         record.exercises.add(exercise.name);
       });
@@ -70,25 +104,28 @@ export function calculateMuscleProgress(
   prs.filter((pr) => pr.date >= fromDate && pr.date <= toDate).forEach((pr) => {
     const exercise = allExercises.find((item) => item.name === pr.exerciseName);
     exercise?.muscleGroups?.forEach((group) => {
-      records.get(group)!.prs += 1;
+      records.get(group)!.prs.push(`${pr.exerciseName}: ${pr.label}`);
     });
   });
 
   return muscleGroupOrder.map((group) => {
     const record = records.get(group)!;
-    const score = record.sets + record.prs * 3 + Math.min(3, record.workouts.size);
-    const intensity: MuscleProgress["intensity"] = score === 0 ? 0 : score <= 3 ? 1 : score <= 7 ? 2 : score <= 12 ? 3 : 4;
+    const stimulusPoints = Number(record.stimulus.toFixed(1));
+    const score = Number((stimulusPoints + record.prs.length * 2 + Math.min(2, record.workouts.size * 0.5)).toFixed(1));
+    const intensity: MuscleProgress["intensity"] = score === 0 ? 0 : score <= 2.5 ? 1 : score <= 6 ? 2 : score <= 10 ? 3 : 4;
     const trend: MuscleProgress["trend"] = ["No recent work", "Light", "On track", "High", "Standout"][intensity] as MuscleProgress["trend"];
     const exercises = Array.from(record.exercises).sort();
     return {
       group,
       label: muscleLabels[group],
       sets: record.sets,
-      prCount: record.prs,
+      stimulusPoints,
+      prCount: record.prs.length,
       completedWorkouts: record.workouts.size,
       score,
       intensity,
       exercises,
+      recentPRs: record.prs.slice(-3).reverse(),
       trend,
       nextTarget: exercises.length
         ? `Next target: add one clean rep or match quality on ${exercises[0]} before changing load.`

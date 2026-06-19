@@ -31,6 +31,7 @@ import {
   Exercise,
   ExerciseLog,
   GamificationSettings,
+  MuscleGroup,
   ProgramSettings,
   SetLog,
   WorkoutLog,
@@ -878,6 +879,16 @@ function Dashboard({
   const heatPreview = gamification.activities.slice(-35);
   const weeklyMuscleProgress = calculateMuscleProgress(data, gamification.prs);
   const weeklyFocus = weeklyMuscleFocus(weeklyMuscleProgress);
+  const todayMuscles = Array.from(new Set(workout.exercises.flatMap((exercise) => exercise.muscleGroups ?? []))).slice(0, 5);
+  const weeklyPRs = gamification.prs.filter((pr) => pr.date >= addDays(today, -6)).sort((a, b) => b.date.localeCompare(a.date));
+  const nextBadge = [...gamification.achievements]
+    .filter((badge) => !badge.unlocked)
+    .sort((a, b) => (b.progressCurrent / Math.max(1, b.progressTarget)) - (a.progressCurrent / Math.max(1, a.progressTarget)))[0];
+  const scoreReasons = [
+    `${weekCompleted}/${trainingDayKeys.length} workouts complete`,
+    `${gamification.executionScore.logging}% logging quality`,
+    `${weeklyPRs.length} PR${weeklyPRs.length === 1 ? "" : "s"} this week`,
+  ];
   const handleMissionAction = () => {
     if (mission.action === "sync") onSyncNow();
     else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
@@ -900,6 +911,7 @@ function Dashboard({
                 <span>Up to {mission.availableXP} XP available</span>
                 <span>{mission.focusCue}</span>
               </div>
+              {!!todayMuscles.length && <div className="mission-muscles"><small>Body-part focus</small>{todayMuscles.map((group) => <span key={group}>{muscleLabels[group]}</span>)}</div>}
             </div>
             <div className="mission-action">
               <span>Next Best Action</span>
@@ -939,24 +951,20 @@ function Dashboard({
           )}
 
           <section className="game-grid">
-            <article className="game-card level-card">
-              <p className="eyebrow">Level {gamification.level.level}</p>
-              <h3>{gamification.level.title}</h3>
-              <strong>{gamification.totalXP.toLocaleString()} XP</strong>
+            <article className="game-card level-card telemetry-card">
+              <div className="game-card-heading"><div><p className="eyebrow">Level {gamification.level.level}</p><h3>{gamification.level.title}</h3></div><strong>{gamification.totalXP.toLocaleString()} XP</strong></div>
               <div className="xp-bar"><i style={{ width: `${gamification.level.progressPercent}%` }} /></div>
               <span>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</span>
+              {nextBadge && <small>Next badge · {nextBadge.title} ({nextBadge.progressCurrent}/{nextBadge.progressTarget})</small>}
             </article>
-            <article className="game-card score-card">
-              <p className="eyebrow">Execution Score</p>
-              <h3>{gamification.executionScore.overall}/100</h3>
-              <strong>{gamification.executionScore.label}</strong>
-              <span>Quality score, separate from XP.</span>
+            <article className="game-card score-card lock-in-card">
+              <div className="lock-score" style={{ "--lock-score": `${gamification.executionScore.overall * 3.6}deg` } as React.CSSProperties}><span>{gamification.executionScore.overall}</span><small>/100</small></div>
+              <div><p className="eyebrow">Lock-In Score</p><h3>{gamification.executionScore.label}</h3><ul>{scoreReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>
             </article>
-            <article className="game-card streak-card">
+            <article className="game-card streak-card telemetry-card">
               <p className="eyebrow">Streaks</p>
-              <h3>{gamification.streaks.dailyCheckIn.current} days</h3>
-              <span>Daily check-in · workout streak {gamification.streaks.workout.current}</span>
-              <span>Weekly completion streak {gamification.streaks.weeklyCompletion.current}</span>
+              <div className="streak-metrics"><span><strong>{gamification.streaks.dailyCheckIn.current}</strong>Daily check-in</span><span><strong>{gamification.streaks.workout.current}</strong>Workout</span><span><strong>{gamification.streaks.weeklyCompletion.current}</strong>Perfect weeks</span></div>
+              <small>{gamification.streaks.dailyCheckIn.graceUsedThisWeek ? "Grace day used this week. The next check-in keeps momentum." : "One grace day remains available this week."}</small>
             </article>
           </section>
 
@@ -1005,11 +1013,11 @@ function Dashboard({
             </div>
             <div className="focus-summary-grid">
               <div><span>Workouts</span><strong>{weekCompleted}/{trainingDayKeys.length}</strong></div>
-              <div><span>Muscle focus</span><strong>{weeklyFocus.leading?.label ?? "Waiting for logs"}</strong></div>
-              <div><span>Recent PRs</span><strong>{gamification.prs.filter((pr) => pr.date >= addDays(today, -6)).length}</strong></div>
+              <div><span>Most trained</span><strong>{weeklyFocus.leading?.label ?? "Waiting for logs"}</strong></div>
+              <div><span>Lightest area</span><strong>{weeklyFocus.lightest?.label ?? "Waiting for logs"}</strong></div>
               <div><span>Consistency</span><strong>{gamification.executionScore.consistency}/100</strong></div>
             </div>
-            <p>{weeklyFocus.lightest?.score === 0 ? `${weeklyFocus.lightest.label} has no completed sets in the last 7 days. Let the scheduled workout address it.` : "Stay with the plan. Progress is coming from completed scheduled work, not extra volume."}</p>
+            <div className="weekly-review-callout"><span>Best recent win</span><strong>{weeklyPRs[0] ? `${weeklyPRs[0].exerciseName} · ${weeklyPRs[0].label}` : "Complete repeat sessions to establish a real PR."}</strong><p>{weeklyFocus.lightest?.score === 0 ? `${weeklyFocus.lightest.label} is light. Let its scheduled workout address it, without adding junk volume.` : `Next action: ${mission.nextBestAction}`}</p></div>
           </section>
         </>
       ) : (
@@ -1577,6 +1585,7 @@ function RecapPage({
     );
   }
   const trainedMuscles = musclesForWorkout(recap.log);
+  const recapMuscleProgress = calculateMuscleProgress(data, gamification.prs, recap.log.date, recap.log.date);
   return (
     <div className="content-stack">
       <section className="recap-hero">
@@ -1595,12 +1604,7 @@ function RecapPage({
       </section>
 
       {!!trainedMuscles.length && (
-        <section className="panel recap-muscles">
-          <div className="section-heading"><div><p className="eyebrow">Body parts trained</p><h3>Workout contribution</h3></div></div>
-          <div className="muscle-chip-list">
-            {trainedMuscles.map((group) => <span key={group}>{muscleLabels[group]}</span>)}
-          </div>
-        </section>
+        <MuscleMapPanel progress={recapMuscleProgress} title="Workout muscle impact" rangeLabel="This session" compact />
       )}
 
       <section className="game-grid two">
@@ -1884,16 +1888,116 @@ function NumberField({
   );
 }
 
+function MuscleRegion({
+  group,
+  progress,
+  selected,
+  onSelect,
+  children,
+}: {
+  group: MuscleGroup;
+  progress?: MuscleProgress;
+  selected: boolean;
+  onSelect: (group: MuscleGroup) => void;
+  children: React.ReactNode;
+}) {
+  const select = () => onSelect(group);
+  return (
+    <g
+      className={classNames("muscle-region", `intensity-${progress?.intensity ?? 0}`, selected && "selected")}
+      data-muscle={group}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`${muscleLabels[group]}: ${progress?.trend ?? "No recent work"}, ${progress?.sets ?? 0} completed sets`}
+      onClickCapture={select}
+      onPointerDownCapture={select}
+      onPointerDown={select}
+      onClick={select}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          select();
+        }
+      }}
+    >
+      <title>{muscleLabels[group]}</title>
+      {children}
+    </g>
+  );
+}
+
+function AnatomyFigure({
+  view,
+  byGroup,
+  selectedGroup,
+  onSelect,
+}: {
+  view: "front" | "back";
+  byGroup: Map<MuscleGroup, MuscleProgress>;
+  selectedGroup?: MuscleGroup;
+  onSelect: (group: MuscleGroup) => void;
+}) {
+  const region = (group: MuscleGroup, paths: React.ReactNode) => (
+    <MuscleRegion group={group} progress={byGroup.get(group)} selected={selectedGroup === group} onSelect={onSelect}>
+      {paths}
+    </MuscleRegion>
+  );
+  return (
+    <div className="anatomy-view">
+      <span>{view === "front" ? "Anterior" : "Posterior"}</span>
+      <svg viewBox="0 0 240 520" role="img" aria-labelledby={`${view}-body-title ${view}-body-desc`}>
+        <title id={`${view}-body-title`}>{view === "front" ? "Front" : "Back"} muscle stimulus map</title>
+        <desc id={`${view}-body-desc`}>Select a muscle region to inspect completed sets, exercise sources, personal records, and the next useful focus.</desc>
+        <defs>
+          <linearGradient id={`${view}-body-surface`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#202d40" />
+            <stop offset="0.55" stopColor="#111a28" />
+            <stop offset="1" stopColor="#09101a" />
+          </linearGradient>
+          <filter id={`${view}-muscle-glow`} x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <path className="anatomy-silhouette" fill={`url(#${view}-body-surface)`} d="M104 16 C86 25 82 45 88 63 L98 77 L93 91 C69 97 50 110 43 137 L25 220 C22 235 31 243 40 237 L58 171 L66 234 L78 290 L66 399 L74 501 L103 501 L119 402 L121 301 L137 402 L153 501 L182 501 L190 399 L178 290 L190 234 L198 171 L216 237 C225 243 234 235 231 220 L213 137 C206 110 187 97 163 91 L158 77 L168 63 C174 45 170 25 152 16 C137 8 119 8 104 16 Z" />
+        <path className="anatomy-midline" d="M128 84 L128 293 M128 307 L128 490" />
+        <path className="anatomy-contour" d="M91 91 Q128 109 165 91 M67 233 Q128 249 189 233 M79 290 Q128 305 177 290" />
+        {view === "front" ? (
+          <>
+            {region("front-delts", <><path d="M91 99 C72 101 58 111 55 128 C61 139 72 143 82 135 L96 113 Z"/><path d="M165 99 C184 101 198 111 201 128 C195 139 184 143 174 135 L160 113 Z"/></>)}
+            {region("side-delts", <><path d="M55 126 C45 139 45 160 51 177 L65 169 L70 139 Z"/><path d="M201 126 C211 139 211 160 205 177 L191 169 L186 139 Z"/></>)}
+            {region("upper-chest", <><path d="M96 105 C106 97 116 96 126 104 L126 128 C109 127 97 121 88 114 Z"/><path d="M160 105 C150 97 140 96 130 104 L130 128 C147 127 159 121 168 114 Z"/></>)}
+            {region("chest", <><path d="M87 117 C99 128 111 133 126 133 L126 166 C107 170 88 160 78 143 Z"/><path d="M169 117 C157 128 145 133 130 133 L130 166 C149 170 168 160 178 143 Z"/></>)}
+            {region("biceps", <><path d="M54 174 C45 185 43 210 49 224 C57 230 66 220 67 199 L66 174 Z"/><path d="M202 174 C211 185 213 210 207 224 C199 230 190 220 189 199 L190 174 Z"/></>)}
+            {region("forearms", <><path d="M47 226 L33 286 C31 298 38 304 45 294 L61 238 Z"/><path d="M209 226 L223 286 C225 298 218 304 211 294 L195 238 Z"/></>)}
+            {region("abs-core", <><path d="M103 169 C113 165 121 168 126 173 L125 218 L101 214 Z"/><path d="M153 169 C143 165 135 168 130 173 L131 218 L155 214 Z"/><path d="M101 220 L125 223 L124 272 L91 267 Z"/><path d="M155 220 L131 223 L132 272 L165 267 Z"/></>)}
+            {region("quads", <><path d="M83 296 C96 285 111 290 119 307 L112 397 C101 410 83 397 80 372 Z"/><path d="M173 296 C160 285 145 290 137 307 L144 397 C155 410 173 397 176 372 Z"/></>)}
+            {region("calves", <><path d="M78 404 C90 397 105 407 106 431 L98 480 C89 493 77 479 76 454 Z"/><path d="M178 404 C166 397 151 407 150 431 L158 480 C167 493 179 479 180 454 Z"/></>)}
+          </>
+        ) : (
+          <>
+            {region("upper-back", <><path d="M101 91 L128 104 L155 91 L166 119 L145 143 L128 132 L111 143 L90 119 Z"/><path d="M111 143 L128 134 L145 143 L142 174 L128 181 L114 174 Z"/></>)}
+            {region("rear-delts", <><path d="M91 101 C72 103 59 114 57 131 C65 140 76 143 86 133 L99 112 Z"/><path d="M165 101 C184 103 197 114 199 131 C191 140 180 143 170 133 L157 112 Z"/></>)}
+            {region("lats", <><path d="M90 126 C103 139 108 164 107 204 L84 245 L72 214 L76 157 Z"/><path d="M166 126 C153 139 148 164 149 204 L172 245 L184 214 L180 157 Z"/></>)}
+            {region("triceps", <><path d="M56 143 C46 159 44 199 51 222 C61 225 68 211 67 181 L68 151 Z"/><path d="M200 143 C210 159 212 199 205 222 C195 225 188 211 189 181 L188 151 Z"/></>)}
+            {region("forearms", <><path d="M48 225 L34 286 C31 299 39 304 46 294 L61 238 Z"/><path d="M208 225 L222 286 C225 299 217 304 210 294 L195 238 Z"/></>)}
+            {region("glutes", <><path d="M83 270 C96 258 116 264 124 279 L120 311 C103 322 82 312 77 294 Z"/><path d="M173 270 C160 258 140 264 132 279 L136 311 C153 322 174 312 179 294 Z"/></>)}
+            {region("hamstrings", <><path d="M80 316 C94 307 111 317 116 338 L109 402 C95 412 80 397 78 371 Z"/><path d="M176 316 C162 307 145 317 140 338 L147 402 C161 412 176 397 178 371 Z"/></>)}
+            {region("calves", <><path d="M77 407 C89 397 105 407 106 432 L98 481 C88 493 76 478 76 452 Z"/><path d="M179 407 C167 397 151 407 150 432 L158 481 C168 493 180 478 180 452 Z"/></>)}
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 days", compact = false }: { progress: MuscleProgress[]; title?: string; rangeLabel?: string; compact?: boolean }) {
-  const firstActive = progress.find((item) => item.score > 0) ?? progress[0];
+  const firstActive = progress.find((item) => item.score > 0);
   const [selectedGroup, setSelectedGroup] = useState(firstActive?.group);
   const byGroup = new Map(progress.map((item) => [item.group, item]));
   const selected = selectedGroup ? byGroup.get(selectedGroup) : undefined;
-  const zoneClass = (group: typeof muscleGroupOrder[number]) => classNames(
-    "muscle-zone",
-    `intensity-${byGroup.get(group)?.intensity ?? 0}`,
-    selectedGroup === group && "selected",
-  );
+  const activeGroups = [...progress].filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
   return (
     <section className={classNames("panel muscle-map-panel", compact && "compact")}>
       <div className="section-heading">
@@ -1901,35 +2005,67 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
           <p className="eyebrow">{rangeLabel}</p>
           <h2>{title}</h2>
         </div>
-        <div className="muscle-legend" aria-label="Muscle activity intensity legend">
-          <span>Low</span><i className="intensity-1" /><i className="intensity-2" /><i className="intensity-3" /><i className="intensity-4" /><span>High</span>
+        <div className="muscle-legend" aria-label="Muscle stimulus intensity legend">
+          <span><i className="intensity-0" />Inactive</span><span><i className="intensity-1" />Light</span><span><i className="intensity-2" />Good</span><span><i className="intensity-3" />High stimulus</span><span><i className="intensity-4" />Standout</span>
         </div>
       </div>
       <div className="muscle-map-layout">
-        <div className="body-map" aria-hidden="true">
-          <div><span>Front</span><svg viewBox="0 0 150 320"><circle className="body-outline" cx="75" cy="26" r="18"/><path className="body-outline" d="M54 48 Q75 40 96 48 L111 128 L101 190 L96 298 L76 298 L75 196 L74 298 L54 298 L49 190 L39 128 Z"/><ellipse className={zoneClass("front-delts")} cx="48" cy="67" rx="13" ry="11"/><ellipse className={zoneClass("front-delts")} cx="102" cy="67" rx="13" ry="11"/><rect className={zoneClass("upper-chest")} x="57" y="56" width="36" height="13" rx="6"/><rect className={zoneClass("chest")} x="55" y="70" width="40" height="25" rx="10"/><ellipse className={zoneClass("side-delts")} cx="39" cy="70" rx="8" ry="15"/><ellipse className={zoneClass("side-delts")} cx="111" cy="70" rx="8" ry="15"/><ellipse className={zoneClass("biceps")} cx="35" cy="101" rx="7" ry="19"/><ellipse className={zoneClass("biceps")} cx="115" cy="101" rx="7" ry="19"/><rect className={zoneClass("forearms")} x="25" y="120" width="10" height="42" rx="5"/><rect className={zoneClass("forearms")} x="115" y="120" width="10" height="42" rx="5"/><rect className={zoneClass("abs-core")} x="61" y="101" width="28" height="64" rx="9"/><rect className={zoneClass("quads")} x="51" y="184" width="20" height="64" rx="10"/><rect className={zoneClass("quads")} x="79" y="184" width="20" height="64" rx="10"/><rect className={zoneClass("calves")} x="53" y="251" width="16" height="42" rx="8"/><rect className={zoneClass("calves")} x="81" y="251" width="16" height="42" rx="8"/></svg></div>
-          <div><span>Back</span><svg viewBox="0 0 150 320"><circle className="body-outline" cx="75" cy="26" r="18"/><path className="body-outline" d="M54 48 Q75 40 96 48 L111 128 L101 190 L96 298 L76 298 L75 196 L74 298 L54 298 L49 190 L39 128 Z"/><rect className={zoneClass("upper-back")} x="56" y="52" width="38" height="36" rx="10"/><path className={zoneClass("lats")} d="M50 82 Q61 91 63 139 L48 151 L42 93 Z"/><path className={zoneClass("lats")} d="M100 82 Q89 91 87 139 L102 151 L108 93 Z"/><ellipse className={zoneClass("rear-delts")} cx="42" cy="68" rx="11" ry="12"/><ellipse className={zoneClass("rear-delts")} cx="108" cy="68" rx="11" ry="12"/><ellipse className={zoneClass("triceps")} cx="34" cy="104" rx="7" ry="20"/><ellipse className={zoneClass("triceps")} cx="116" cy="104" rx="7" ry="20"/><rect className={zoneClass("glutes")} x="53" y="164" width="44" height="31" rx="13"/><rect className={zoneClass("hamstrings")} x="51" y="197" width="20" height="52" rx="10"/><rect className={zoneClass("hamstrings")} x="79" y="197" width="20" height="52" rx="10"/><rect className={zoneClass("calves")} x="53" y="251" width="16" height="42" rx="8"/><rect className={zoneClass("calves")} x="81" y="251" width="16" height="42" rx="8"/></svg></div>
+        <div className="body-map">
+          <AnatomyFigure view="front" byGroup={byGroup} selectedGroup={selectedGroup} onSelect={setSelectedGroup} />
+          <AnatomyFigure view="back" byGroup={byGroup} selectedGroup={selectedGroup} onSelect={setSelectedGroup} />
         </div>
         <div className="muscle-map-details">
-          <div className="muscle-picker" role="list" aria-label="Muscle groups">
+          {!compact && <div className="muscle-picker" role="list" aria-label="Muscle groups">
             {progress.map((item) => (
               <button key={item.group} className={classNames(`intensity-${item.intensity}`, selectedGroup === item.group && "selected")} onClick={() => setSelectedGroup(item.group)}>
-                <span>{item.label}</span><strong>{item.sets}</strong>
+                <span>{item.label}</span><strong>{item.sets} sets</strong>
               </button>
             ))}
-          </div>
+          </div>}
           {selected && (
             <div className="muscle-detail-card" aria-live="polite">
               <p className="eyebrow">{selected.trend}</p>
               <h3>{selected.label}</h3>
-              <p>{selected.sets} completed sets · {selected.prCount} recent PR{selected.prCount === 1 ? "" : "s"} · {selected.completedWorkouts} workout{selected.completedWorkouts === 1 ? "" : "s"}</p>
+              <div className="muscle-detail-metrics">
+                <span><strong>{selected.sets}</strong> completed sets</span>
+                <span><strong>{selected.stimulusPoints}</strong> stimulus points</span>
+                <span><strong>{selected.prCount}</strong> recent PR{selected.prCount === 1 ? "" : "s"}</span>
+              </div>
               <span>{selected.exercises.length ? selected.exercises.join(" · ") : "No completed exercise for this muscle in the selected range."}</span>
+              {!!selected.recentPRs.length && <small>Recent win: {selected.recentPRs[0]}</small>}
               <strong>{selected.nextTarget}</strong>
             </div>
           )}
+          {!selected && <div className="muscle-detail-card empty-muscle-detail"><p className="eyebrow">Ready for input</p><h3>No recent muscle stimulus</h3><span>Complete a workout and this map will show where the scheduled work landed.</span></div>}
+          {compact && !!activeGroups.length && <div className="muscle-impact-list">{activeGroups.slice(0, 5).map((item) => <button key={item.group} onClick={() => setSelectedGroup(item.group)}><span>{item.label}</span><strong>{item.trend}</strong></button>)}</div>}
         </div>
       </div>
+      <p className="muscle-method-note">Primary-target sets count 1.0 stimulus point; supporting targets count 0.5. Valid PRs add 2 points. Colors summarize workload, not injury or recovery status.</p>
     </section>
+  );
+}
+
+function PRTimeline({ gamification }: { gamification: GamificationSummary }) {
+  const records = [...gamification.prs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  if (!records.length) return <div className="empty-state compact">Repeat an exercise in a later completed session to establish a real PR.</div>;
+  return (
+    <div className="pr-timeline" aria-label="Recent personal record timeline">
+      {records.map((pr) => {
+        const exercise = allExercises.find((item) => item.name === pr.exerciseName);
+        const muscle = exercise?.muscleGroups?.[0];
+        const xp = gamification.xpEvents.find((event) => event.key === pr.id)?.xp;
+        return (
+          <article key={pr.id} className="pr-timeline-item">
+            <div className="pr-timeline-marker"><Dumbbell size={16} /></div>
+            <div>
+              <div className="pr-timeline-meta"><time>{formatDate(pr.date)}</time>{muscle && <span>{muscleLabels[muscle]}</span>}{xp && <strong>+{xp} XP</strong>}</div>
+              <h4>{pr.exerciseName}</h4>
+              <p>{pr.label}</p>
+            </div>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1937,12 +2073,12 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
   const exerciseNames = useMemo(() => Array.from(new Set(allExercises.map((exercise) => exercise.name))).sort(), []);
   const [selectedExercise, setSelectedExercise] = useState(exerciseNames[0] ?? "");
   const [range, setRange] = useState<"week" | "cycle" | "last8" | "all">("cycle");
-  const [muscleRange, setMuscleRange] = useState<"week" | "cycle">("week");
+  const [muscleRange, setMuscleRange] = useState<"week" | "cycle" | "all">("week");
   const today = todayISO();
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
   const progressSettings = { ...data.settings, startDate };
   const cycleInfo = getCycleInfo(startDate, today);
-  const muscleFromDate = muscleRange === "week" ? addDays(today, -6) : addDays(startDate, (cycleInfo.cycle - 1) * 56);
+  const muscleFromDate = muscleRange === "week" ? addDays(today, -6) : muscleRange === "cycle" ? addDays(startDate, (cycleInfo.cycle - 1) * 56) : startDate;
   const muscleProgress = calculateMuscleProgress(data, gamification.prs, muscleFromDate, today);
   const muscleFocus = weeklyMuscleFocus(calculateMuscleProgress(data, gamification.prs));
   const filteredLogs = data.workoutLogs.filter((log) => {
@@ -2008,33 +2144,25 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
     <div className="content-stack">
       {gamificationEnabled && (
         <>
-          <section className="panel">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Activity heat map</p>
-                <h2>Execution history</h2>
-              </div>
-            </div>
-            <HeatMap activities={gamification.activities} />
-          </section>
-
           <div className="visual-section-toolbar">
             <span>Muscle progress range</span>
             <div className="segmented-control">
               <button className={muscleRange === "week" ? "active" : ""} onClick={() => setMuscleRange("week")}>Last 7 Days</button>
               <button className={muscleRange === "cycle" ? "active" : ""} onClick={() => setMuscleRange("cycle")}>Current Cycle</button>
+              <button className={muscleRange === "all" ? "active" : ""} onClick={() => setMuscleRange("all")}>All Time</button>
             </div>
           </div>
-          <MuscleMapPanel progress={muscleProgress} rangeLabel={muscleRange === "week" ? "Last 7 days" : `Cycle ${cycleInfo.cycle}`} />
+          <MuscleMapPanel progress={muscleProgress} rangeLabel={muscleRange === "week" ? "Last 7 days" : muscleRange === "cycle" ? `Cycle ${cycleInfo.cycle}` : "All logged training"} />
 
           <section className="panel weekly-focus-card">
             <div className="section-heading">
               <div><p className="eyebrow">Weekly muscle focus</p><h3>Where the work is landing</h3></div>
             </div>
             <div className="focus-summary-grid">
-              <div><span>Leading</span><strong>{muscleFocus.leading?.label ?? "No data"}</strong></div>
+              <div><span>Most trained</span><strong>{muscleFocus.leading?.label ?? "No data"}</strong></div>
               <div><span>Also strong</span><strong>{muscleFocus.secondary?.label ?? "No data"}</strong></div>
-              <div><span>Light this week</span><strong>{muscleFocus.lightest?.label ?? "No data"}</strong></div>
+              <div><span>Light stimulus</span><strong>{muscleFocus.lightest?.label ?? "No data"}</strong></div>
+              <div><span>Consistency</span><strong>{gamification.executionScore.consistency}/100</strong></div>
             </div>
             <p>{muscleFocus.leading ? `${muscleFocus.leading.label} leads with ${muscleFocus.leading.sets} completed sets. Keep the routine order; the light area should be addressed by its scheduled day, not extra volume.` : "Complete a workout to populate the weekly muscle view."}</p>
           </section>
@@ -2059,18 +2187,8 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
                   <h3>Conservative records</h3>
                 </div>
               </div>
-              <MiniList empty="No PRs yet." items={gamification.recentPRs.map((pr) => `${formatDate(pr.date)} · ${pr.exerciseName}: ${pr.label}`)} />
+              <PRTimeline gamification={gamification} />
             </article>
-          </section>
-
-          <section className="panel">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Achievements</p>
-                <h2>Badges</h2>
-              </div>
-            </div>
-            <BadgeGrid achievements={gamification.achievements} />
           </section>
         </>
       )}
@@ -2147,6 +2265,23 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
           <div className="empty-state">No completed sessions for this exercise yet.</div>
         )}
       </section>
+
+      {gamificationEnabled && (
+        <>
+          <section className="panel bodyweight-progress-panel">
+            <div className="section-heading"><div><p className="eyebrow">Body weight trend</p><h2>Scale direction</h2></div><span>{filteredWeights.length} entries in view</span></div>
+            <ChartPanel title="Body weight" values={filteredWeights.map((entry) => entry.weight)} stroke="#73a7ff" />
+          </section>
+          <section className="panel">
+            <div className="section-heading"><div><p className="eyebrow">Activity heat map</p><h2>Execution history</h2></div></div>
+            <HeatMap activities={gamification.activities} />
+          </section>
+          <section className="panel">
+            <div className="section-heading"><div><p className="eyebrow">Achievements</p><h2>Badges</h2></div></div>
+            <BadgeGrid achievements={gamification.achievements} />
+          </section>
+        </>
+      )}
 
       <section className="panel">
         <div className="section-heading">
