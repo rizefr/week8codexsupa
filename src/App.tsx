@@ -902,31 +902,44 @@ function Dashboard({
     <div className="page-grid">
       {gamificationEnabled ? (
         <>
-          <section className="mission-panel">
-            <div>
-              <p className="eyebrow">Today's Mission</p>
+          <section className="mission-panel premium-card">
+            <div className="mission-content">
+              <span className="eyebrow-accent">Today's Mission</span>
               <h2>{mission.title}</h2>
-              <p>{mission.subtitle}</p>
-              <div className="mission-meta">
-                <span>Up to {mission.availableXP} XP available</span>
-                <span>{mission.focusCue}</span>
+              <p className="mission-subtitle">{mission.subtitle}</p>
+              <div className="mission-tags">
+                <span className="available-xp-tag">⚡ Up to {mission.availableXP} XP available</span>
+                {mission.focusCue && <span className="focus-cue-tag">🎯 {mission.focusCue}</span>}
               </div>
-              {!!todayMuscles.length && <div className="mission-muscles"><small>Body-part focus</small>{todayMuscles.map((group) => <span key={group}>{muscleLabels[group]}</span>)}</div>}
+              {!!todayMuscles.length && (
+                <div className="mission-muscles" style={{ marginTop: "0.8rem" }}>
+                  <small style={{ color: "var(--muted)", display: "block", marginBottom: "0.25rem", fontSize: "0.74rem", textTransform: "uppercase" }}>Body-part focus</small>
+                  <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                    {todayMuscles.map((group) => (
+                      <span key={group} className="focus-cue-tag" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid var(--line)" }}>
+                        {muscleLabels[group]}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="mission-action">
-              <span>Next Best Action</span>
-              <strong>{mission.nextBestAction}</strong>
-              <button className="primary-action" onClick={handleMissionAction}>
+              <span className="action-helper">Next Best Action</span>
+              <strong className="action-title">{mission.nextBestAction}</strong>
+              <button className="primary-action-btn pulse-glow" onClick={handleMissionAction}>
                 <Play size={18} />
-                {mission.nextBestAction}
+                <span>{mission.nextBestAction}</span>
               </button>
               {mission.action === "log-weight" && (
-                <button className="secondary-action subtle" type="button" onClick={skipBodyWeightToday}>
+                <button className="secondary-action subtle skip-btn" type="button" onClick={skipBodyWeightToday}>
                   Skip Weight Today
                 </button>
               )}
               {!todayLog && (
-                <ScheduleOverrideChooser onChoose={(day) => startWorkout(today, day)} compact />
+                <div className="override-wrapper">
+                  <ScheduleOverrideChooser onChoose={(day) => startWorkout(today, day)} compact />
+                </div>
               )}
             </div>
           </section>
@@ -951,20 +964,64 @@ function Dashboard({
           )}
 
           <section className="game-grid">
-            <article className="game-card level-card telemetry-card">
-              <div className="game-card-heading"><div><p className="eyebrow">Level {gamification.level.level}</p><h3>{gamification.level.title}</h3></div><strong>{gamification.totalXP.toLocaleString()} XP</strong></div>
-              <div className="xp-bar"><i style={{ width: `${gamification.level.progressPercent}%` }} /></div>
-              <span>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</span>
-              {nextBadge && <small>Next badge · {nextBadge.title} ({nextBadge.progressCurrent}/{nextBadge.progressTarget})</small>}
+            <article className="game-card level-card telemetry-card premium-glass">
+              <div className="game-card-heading">
+                <div>
+                  <span className="eyebrow-accent" style={{ color: "var(--green)" }}>Level {gamification.level.level}</span>
+                  <h3>{gamification.level.title}</h3>
+                </div>
+                <strong className="xp-cap">{gamification.totalXP.toLocaleString()} XP</strong>
+              </div>
+              <div className="xp-bar-container">
+                <div className="xp-bar" style={{ background: "rgba(255,255,255,0.06)", height: "6px", borderRadius: "3px" }}>
+                  <i style={{ width: `${gamification.level.progressPercent}%`, background: "linear-gradient(90deg, #3dd6a3, #73a7ff)", borderRadius: "3px" }} />
+                </div>
+                <div className="xp-bar-labels">
+                  <span>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</span>
+                </div>
+              </div>
+              {nextBadge && <small style={{ display: "block", marginTop: "0.5rem", color: "var(--muted)", fontSize: "0.78rem" }}>Next badge · {nextBadge.title} ({nextBadge.progressCurrent}/{nextBadge.progressTarget})</small>}
             </article>
-            <article className="game-card score-card lock-in-card">
-              <div className="lock-score" style={{ "--lock-score": `${gamification.executionScore.overall * 3.6}deg` } as React.CSSProperties}><span>{gamification.executionScore.overall}</span><small>/100</small></div>
-              <div><p className="eyebrow">Lock-In Score</p><h3>{gamification.executionScore.label}</h3><ul>{scoreReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>
+
+            <article className="game-card score-card lock-in-card premium-glass">
+              <div className="lock-score" style={{ "--lock-score": `${gamification.executionScore.overall * 3.6}deg` } as React.CSSProperties}>
+                <span>{gamification.executionScore.overall}</span>
+                <small>/100</small>
+              </div>
+              <div>
+                <span className="eyebrow-accent" style={{ color: "var(--amber)" }}>Lock-In Score</span>
+                <h3>{gamification.executionScore.label}</h3>
+                <ul style={{ paddingLeft: "1.1rem", margin: "0.4rem 0 0", color: "var(--muted)", fontSize: "0.82rem" }}>
+                  {scoreReasons.map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+              </div>
             </article>
-            <article className="game-card streak-card telemetry-card">
-              <p className="eyebrow">Streaks</p>
-              <div className="streak-metrics"><span><strong>{gamification.streaks.dailyCheckIn.current}</strong>Daily check-in</span><span><strong>{gamification.streaks.workout.current}</strong>Workout</span><span><strong>{gamification.streaks.weeklyCompletion.current}</strong>Perfect weeks</span></div>
-              <small>{gamification.streaks.dailyCheckIn.graceUsedThisWeek ? "Grace day used this week. The next check-in keeps momentum." : "One grace day remains available this week."}</small>
+
+            <article className="game-card streak-card telemetry-card premium-glass">
+              <div className="card-header-flex">
+                <span className="eyebrow-accent" style={{ color: "#ff5e3a" }}>Streaks</span>
+                <Flame size={16} className="streak-fire-icon" />
+              </div>
+              <div className="streak-main-value">
+                <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Streak Active</h3>
+              </div>
+              <div className="streak-sub-details">
+                <div>
+                  <span>Daily check-in</span>
+                  <strong>{gamification.streaks.dailyCheckIn.current}</strong>
+                </div>
+                <div>
+                  <span>Workout</span>
+                  <strong>{gamification.streaks.workout.current}</strong>
+                </div>
+                <div>
+                  <span>Perfect weeks</span>
+                  <strong>{gamification.streaks.weeklyCompletion.current}</strong>
+                </div>
+              </div>
+              <small style={{ display: "block", marginTop: "0.6rem", color: "var(--muted)", fontSize: "0.76rem" }}>
+                {gamification.streaks.dailyCheckIn.graceUsedThisWeek ? "Grace day used this week." : "One grace day remains available."}
+              </small>
             </article>
           </section>
 
@@ -980,7 +1037,7 @@ function Dashboard({
           </section>
 
           <section className="game-grid two">
-            <article className="panel">
+            <article className="panel premium-glass">
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Recent PRs</p>
@@ -992,7 +1049,7 @@ function Dashboard({
                 items={gamification.recentPRs.map((pr) => `${formatDate(pr.date)} · ${pr.exerciseName}: ${pr.label}`)}
               />
             </article>
-            <article className="panel">
+            <article className="panel premium-glass">
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Badges</p>
@@ -1006,9 +1063,9 @@ function Dashboard({
             </article>
           </section>
 
-          <section className="panel weekly-review-card">
+          <section className="panel weekly-review-card premium-glass">
             <div className="section-heading">
-              <div><p className="eyebrow">Weekly review</p><h3>Execution at a glance</h3></div>
+              <div><span className="eyebrow-accent" style={{ color: "var(--blue)" }}>Weekly Review</span><h3>Execution at a glance</h3></div>
               <button className="secondary-action" onClick={() => navigate("progress")}>Open progress</button>
             </div>
             <div className="focus-summary-grid">
@@ -1017,7 +1074,17 @@ function Dashboard({
               <div><span>Lightest area</span><strong>{weeklyFocus.lightest?.label ?? "Waiting for logs"}</strong></div>
               <div><span>Consistency</span><strong>{gamification.executionScore.consistency}/100</strong></div>
             </div>
-            <div className="weekly-review-callout"><span>Best recent win</span><strong>{weeklyPRs[0] ? `${weeklyPRs[0].exerciseName} · ${weeklyPRs[0].label}` : "Complete repeat sessions to establish a real PR."}</strong><p>{weeklyFocus.lightest?.score === 0 ? `${weeklyFocus.lightest.label} is light. Let its scheduled workout address it, without adding junk volume.` : `Next action: ${mission.nextBestAction}`}</p></div>
+            <div className="weekly-review-callout" style={{ borderLeft: "3px solid var(--blue)", background: "rgba(115, 167, 255, 0.03)" }}>
+              <span>Best recent win</span>
+              <strong>{weeklyPRs[0] ? `${weeklyPRs[0].exerciseName} · ${weeklyPRs[0].label}` : "Complete repeat sessions to establish a real PR."}</strong>
+              <p style={{ marginTop: "0.35rem", fontSize: "0.86rem", color: "var(--muted)" }}>
+                {weeklyFocus.lightest?.score === 0 
+                  ? `💡 Tip: ${weeklyFocus.lightest.label} has had low volume. Focus on it this week.`
+                  : weeklyFocus.leading 
+                    ? `🔥 ${weeklyFocus.leading.label} is leading this week with ${weeklyFocus.leading.sets} sets.` 
+                    : `Consistency: Keep the routine simple enough to repeat.`}
+              </p>
+            </div>
           </section>
         </>
       ) : (
@@ -1588,19 +1655,72 @@ function RecapPage({
   const recapMuscleProgress = calculateMuscleProgress(data, gamification.prs, recap.log.date, recap.log.date);
   return (
     <div className="content-stack">
-      <section className="recap-hero">
-        <p className="eyebrow">Workout Complete</p>
-        <h2>+{recap.xpEarned} XP</h2>
-        <p>{recap.log.workoutTitle} · {formatDate(recap.log.date, { weekday: "long", year: "numeric" })}</p>
-        <div className="xp-bar large"><i style={{ width: `${recap.level.progressPercent}%` }} /></div>
-        <span>Level {recap.level.level} · {recap.level.progressPercent}% to Level {recap.level.level + 1}</span>
+      <section className="recap-hero premium-card pulse-glow">
+        <span className="eyebrow-accent">Workout Complete</span>
+        <h2 style={{ fontSize: "2.4rem", margin: "0.2rem 0", color: "#3dd6a3", textShadow: "0 0 12px rgba(61, 214, 163, 0.3)" }}>
+          +{recap.xpEarned} XP
+        </h2>
+        <p style={{ color: "var(--muted)", fontSize: "0.95rem" }}>
+          {recap.log.workoutTitle} · {formatDate(recap.log.date, { weekday: "long", year: "numeric" })}
+        </p>
+        <div className="xp-bar-container" style={{ marginTop: "1rem" }}>
+          <div className="xp-bar large" style={{ background: "rgba(255,255,255,0.06)", height: "8px", borderRadius: "4px" }}>
+            <i style={{ width: `${recap.level.progressPercent}%`, background: "linear-gradient(90deg, #3dd6a3, #73a7ff)", borderRadius: "4px" }} />
+          </div>
+          <div className="xp-bar-labels">
+            <span>Level {recap.level.level}</span>
+            <span>{recap.level.progressPercent}% to Level {recap.level.level + 1}</span>
+          </div>
+        </div>
       </section>
 
       <section className="stats-grid compact">
-        <StatCard icon={BarChart3} label="Workout Score" value={`${recap.workoutScore}/100`} detail="Completion, logging quality, and PR signals." />
-        <StatCard icon={Dumbbell} label="Exercises / sets" value={`${recap.exercisesCompleted} / ${recap.setsCompleted}`} detail="Exercises completed and sets checked off." />
-        <StatCard icon={CheckCircle2} label="Logging quality" value={`${recap.loggingQuality}%`} detail="Set fields completed with valid values." />
-        <StatCard icon={Flame} label="Streak status" value={recap.streakText} detail="Workout streak is separate from daily check-ins." />
+        <article className="panel premium-glass">
+          <div className="card-header-flex">
+            <span className="eyebrow-accent" style={{ color: "var(--amber)" }}>Score</span>
+            <span style={{ color: "var(--amber)", display: "inline-flex" }}><BarChart3 size={16} /></span>
+          </div>
+          <div className="score-value-flex">
+            <h3>{recap.workoutScore}<span>/100</span></h3>
+            <span className="score-badge-indicator" style={{ background: recap.workoutScore >= 80 ? "rgba(61, 214, 163, 0.1)" : "rgba(245, 184, 75, 0.1)", color: recap.workoutScore >= 80 ? "var(--green)" : "var(--amber)", border: recap.workoutScore >= 80 ? "1px solid rgba(61, 214, 163, 0.2)" : "1px solid rgba(245, 184, 75, 0.2)" }}>
+              {recap.workoutScore >= 90 ? "Perfect" : recap.workoutScore >= 75 ? "Excellent" : "Solid"}
+            </span>
+          </div>
+          <p className="score-detail-sub">Signals log accuracy, completion, and PRs.</p>
+        </article>
+
+        <article className="panel premium-glass">
+          <div className="card-header-flex">
+            <span className="eyebrow-accent" style={{ color: "var(--blue)" }}>Workload</span>
+            <span style={{ color: "var(--blue)", display: "inline-flex" }}><Dumbbell size={16} /></span>
+          </div>
+          <div className="score-value-flex">
+            <h3>{recap.setsCompleted}<span> sets</span></h3>
+          </div>
+          <p className="score-detail-sub">{recap.exercisesCompleted} exercises logged.</p>
+        </article>
+
+        <article className="panel premium-glass">
+          <div className="card-header-flex">
+            <span className="eyebrow-accent" style={{ color: "var(--green)" }}>Quality</span>
+            <span style={{ color: "var(--green)", display: "inline-flex" }}><CheckCircle2 size={16} /></span>
+          </div>
+          <div className="score-value-flex">
+            <h3>{recap.loggingQuality}<span>%</span></h3>
+          </div>
+          <p className="score-detail-sub">Set details and variables completed.</p>
+        </article>
+
+        <article className="panel premium-glass">
+          <div className="card-header-flex">
+            <span className="eyebrow-accent" style={{ color: "#ff5e3a" }}>Streak</span>
+            <Flame size={16} className="streak-fire-icon" />
+          </div>
+          <div className="streak-main-value">
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Streak Active</h3>
+          </div>
+          <p className="score-detail-sub" style={{ fontSize: "0.74rem" }}>{recap.streakText}</p>
+        </article>
       </section>
 
       {!!trainedMuscles.length && (
@@ -1608,7 +1728,7 @@ function RecapPage({
       )}
 
       <section className="game-grid two">
-        <article className="panel">
+        <article className="panel premium-glass">
           <div className="section-heading">
             <div>
               <p className="eyebrow">PRs</p>
@@ -1617,7 +1737,7 @@ function RecapPage({
           </div>
           <MiniList empty="Good execution still counts. PRs show when performance beats prior valid logs." items={recap.prs.slice(0, 5).map((pr) => `${pr.exerciseName}: ${pr.label}`)} />
         </article>
-        <article className="panel">
+        <article className="panel premium-glass">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Badges</p>
@@ -1628,22 +1748,32 @@ function RecapPage({
         </article>
       </section>
 
-      <section className="panel">
+      <section className="panel premium-glass">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Next time</p>
+            <span className="eyebrow-accent" style={{ color: "var(--amber)" }}>Next time</span>
             <h3>{recap.nextFocus}</h3>
           </div>
         </div>
-        <div className="recap-events">
+        <div className="recap-events" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
           {recap.xpEvents.map((event) => (
-            <span key={event.key}>{event.label} · +{event.xp} XP</span>
+            <span key={event.key} className="focus-cue-tag" style={{ background: "rgba(255,255,255,0.03)", color: "var(--muted)", border: "1px solid var(--line)" }}>
+              {event.label} · +{event.xp} XP
+            </span>
           ))}
         </div>
-        <div className="settings-actions">
-          <button className="primary-action" onClick={() => navigate("dashboard")}>Back to dashboard</button>
-          <button className="secondary-action" onClick={() => navigate("logger", recap.log.id)}>Edit workout</button>
-          <button className="secondary-action" onClick={() => navigate("progress")}>View progress</button>
+        <div className="settings-actions" style={{ display: "grid", gridTemplateColumns: "1fr", gap: "0.5rem" }}>
+          <button className="primary-action-btn pulse-glow" onClick={() => navigate("dashboard")}>
+            Back to dashboard
+          </button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+            <button className="secondary-action" style={{ minHeight: "44px", margin: 0 }} onClick={() => navigate("logger", recap.log.id)}>
+              Edit workout
+            </button>
+            <button className="secondary-action" style={{ minHeight: "44px", margin: 0 }} onClick={() => navigate("progress")}>
+              View progress
+            </button>
+          </div>
         </div>
       </section>
 
@@ -2080,6 +2210,7 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
   const today = todayISO();
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
   const progressSettings = { ...data.settings, startDate };
+  const weekCompleted = completedWorkoutsThisWeek(data.workoutLogs, progressSettings, today);
   const cycleInfo = getCycleInfo(startDate, today);
   const muscleFromDate = muscleRange === "week" ? addDays(today, -6) : muscleRange === "cycle" ? addDays(startDate, (cycleInfo.cycle - 1) * 56) : startDate;
   const muscleProgress = calculateMuscleProgress(data, gamification.prs, muscleFromDate, today);
@@ -2147,6 +2278,7 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
     <div className="content-stack">
       {gamificationEnabled && (
         <>
+          {/* 1. Muscle Map / Body Progress */}
           <div className="visual-section-toolbar">
             <span>Muscle progress range</span>
             <div className="segmented-control">
@@ -2157,41 +2289,51 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
           </div>
           <MuscleMapPanel progress={muscleProgress} rangeLabel={muscleRange === "week" ? "Last 7 days" : muscleRange === "cycle" ? `Cycle ${cycleInfo.cycle}` : "All logged training"} />
 
-          <section className="panel weekly-focus-card">
+          {/* 2. Weekly Review */}
+          <section className="panel weekly-review-card premium-glass">
             <div className="section-heading">
-              <div><p className="eyebrow">Weekly muscle focus</p><h3>Where the work is landing</h3></div>
+              <div><span className="eyebrow-accent" style={{ color: "var(--blue)" }}>Weekly Review</span><h3>Execution at a glance</h3></div>
             </div>
             <div className="focus-summary-grid">
+              <div><span>Workouts</span><strong>{weekCompleted}/{trainingDayKeys.length}</strong></div>
               <div><span>Most trained</span><strong>{muscleFocus.leading?.label ?? "No data"}</strong></div>
-              <div><span>Also strong</span><strong>{muscleFocus.secondary?.label ?? "No data"}</strong></div>
-              <div><span>Light stimulus</span><strong>{muscleFocus.lightest?.label ?? "No data"}</strong></div>
+              <div><span>Lightest area</span><strong>{muscleFocus.lightest?.label ?? "No data"}</strong></div>
               <div><span>Consistency</span><strong>{gamification.executionScore.consistency}/100</strong></div>
             </div>
-            <p>{muscleFocus.leading ? `${muscleFocus.leading.label} leads with ${muscleFocus.leading.sets} completed sets. Keep the routine order; the light area should be addressed by its scheduled day, not extra volume.` : "Complete a workout to populate the weekly muscle view."}</p>
+            <p style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--muted)" }}>
+              {muscleFocus.leading ? `${muscleFocus.leading.label} leads with ${muscleFocus.leading.sets} completed sets. Keep the routine order; the light area should be addressed by its scheduled day, not extra volume.` : "Complete a workout to populate the weekly muscle view."}
+            </p>
           </section>
 
-          <section className="game-grid two">
-            <article className="panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">XP / Level</p>
-                  <h3>Level {gamification.level.level}: {gamification.level.title}</h3>
-                </div>
+          {/* 3. Lock-In / XP / Level Progress */}
+          <section className="panel level-progress-panel premium-glass">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow-accent" style={{ color: "var(--green)" }}>XP & Progression</span>
+                <h2>Level {gamification.level.level}: {gamification.level.title}</h2>
               </div>
-              <strong className="big-number">{gamification.totalXP.toLocaleString()} XP</strong>
-              <div className="xp-bar"><i style={{ width: `${gamification.level.progressPercent}%` }} /></div>
-              <p>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</p>
-              <ChartPanel title="XP over time" values={gamification.activities.map((activity) => activity.xp).map((_, index, values) => values.slice(0, index + 1).reduce((sum, value) => sum + value, 0))} />
-            </article>
-            <article className="panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">PR timeline</p>
-                  <h3>Conservative records</h3>
-                </div>
+            </div>
+            <div className="xp-bar-container" style={{ margin: "0.5rem 0 1rem" }}>
+              <div className="xp-bar large" style={{ background: "rgba(255,255,255,0.06)", height: "8px", borderRadius: "4px" }}>
+                <i style={{ width: `${gamification.level.progressPercent}%`, background: "linear-gradient(90deg, #3dd6a3, #73a7ff)", borderRadius: "4px" }} />
               </div>
-              <PRTimeline gamification={gamification} />
-            </article>
+              <div className="xp-bar-labels">
+                <span>{gamification.totalXP.toLocaleString()} XP total</span>
+                <span>{gamification.level.xpToNext} XP to Level {gamification.level.level + 1}</span>
+              </div>
+            </div>
+            <ChartPanel title="XP over time" values={gamification.activities.map((activity) => activity.xp).map((_, index, values) => values.slice(0, index + 1).reduce((sum, value) => sum + value, 0))} />
+          </section>
+
+          {/* 4. PR Timeline */}
+          <section className="panel pr-timeline-panel premium-glass">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow-accent" style={{ color: "var(--amber)" }}>PR Timeline</span>
+                <h2>Recent Personal Records</h2>
+              </div>
+            </div>
+            <PRTimeline gamification={gamification} />
           </section>
         </>
       )}
@@ -2271,16 +2413,21 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
 
       {gamificationEnabled && (
         <>
-          <section className="panel bodyweight-progress-panel">
-            <div className="section-heading"><div><p className="eyebrow">Body weight trend</p><h2>Scale direction</h2></div><span>{filteredWeights.length} entries in view</span></div>
+          {/* 6. Body Weight Trend */}
+          <section className="panel bodyweight-progress-panel premium-glass">
+            <div className="section-heading"><div><span className="eyebrow-accent" style={{ color: "var(--blue)" }}>Body weight trend</span><h2>Scale direction</h2></div><span>{filteredWeights.length} entries in view</span></div>
             <ChartPanel title="Body weight" values={filteredWeights.map((entry) => entry.weight)} stroke="#73a7ff" />
           </section>
-          <section className="panel">
-            <div className="section-heading"><div><p className="eyebrow">Activity heat map</p><h2>Execution history</h2></div></div>
+
+          {/* 7. Heat Map */}
+          <section className="panel premium-glass">
+            <div className="section-heading"><div><span className="eyebrow-accent">Activity heat map</span><h2>Execution history</h2></div></div>
             <HeatMap activities={gamification.activities} />
           </section>
-          <section className="panel">
-            <div className="section-heading"><div><p className="eyebrow">Achievements</p><h2>Badges</h2></div></div>
+
+          {/* 8. Achievements */}
+          <section className="panel premium-glass">
+            <div className="section-heading"><div><span className="eyebrow-accent" style={{ color: "var(--green)" }}>Achievements</span><h2>Badges</h2></div></div>
             <BadgeGrid achievements={gamification.achievements} />
           </section>
         </>

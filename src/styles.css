@@ -476,8 +476,8 @@ input[type="checkbox"] {
   height: auto;
   top: 0;
   left: -55%;
-  opacity: 0.3;
-  filter: invert(1) grayscale(1) contrast(1.35) brightness(0.82);
+  opacity: 0.85; /* Highly visible muscle texture details */
+  filter: invert(1) grayscale(1) contrast(1.5) brightness(0.9);
   mix-blend-mode: screen;
   pointer-events: none;
   user-select: none;
@@ -489,20 +489,20 @@ input[type="checkbox"] {
   width: 100%;
   max-height: 520px;
   overflow: visible;
-  filter: drop-shadow(0 26px 26px rgba(0, 0, 0, 0.38));
+  filter: drop-shadow(0 26px 26px rgba(0, 0, 0, 0.42));
 }
 
 .anatomy-silhouette {
-  fill: rgba(8, 14, 23, 0.3);
-  stroke: rgba(174, 194, 220, 0.42);
-  stroke-width: 1.5;
+  fill: rgba(8, 14, 23, 0.2);
+  stroke: rgba(174, 194, 220, 0.35);
+  stroke-width: 1.2;
   pointer-events: none;
 }
 
 .anatomy-midline,
 .anatomy-contour {
   fill: none;
-  stroke: rgba(194, 210, 232, 0.13);
+  stroke: rgba(194, 210, 232, 0.15);
   stroke-width: 1;
   stroke-linecap: round;
   pointer-events: none;
@@ -522,10 +522,11 @@ input[type="checkbox"] {
 
 .muscle-region path {
   fill: var(--muscle-color);
+  fill-opacity: 0.35; /* Translucent fill allows WebP texture to show through */
   stroke: var(--muscle-edge);
-  stroke-width: 1.7;
+  stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
-  transition: filter 150ms ease, opacity 150ms ease, stroke 150ms ease;
+  transition: fill-opacity 180ms ease, stroke 180ms ease, filter 180ms ease;
 }
 
 .intensity-0 { --muscle-color: #263243; --muscle-edge: #40516a; }
@@ -534,12 +535,19 @@ input[type="checkbox"] {
 .intensity-3 { --muscle-color: #c64f62; --muscle-edge: #ff8b98; }
 .intensity-4 { --muscle-color: #7f55c5; --muscle-edge: #c49cff; }
 
-.muscle-region:hover path,
+.muscle-region:hover path {
+  fill-opacity: 0.65;
+  stroke: #ffffff;
+  stroke-width: 2.2;
+  filter: brightness(1.2) drop-shadow(0 0 6px var(--muscle-edge));
+}
+
 .muscle-region:focus-visible path,
 .muscle-region.selected path {
+  fill-opacity: 0.78;
   stroke: #ffffff;
-  stroke-width: 2.8;
-  filter: brightness(1.18) drop-shadow(0 0 8px var(--muscle-edge));
+  stroke-width: 2.5;
+  filter: brightness(1.25) drop-shadow(0 0 10px var(--muscle-edge));
 }
 
 .muscle-map-details {
@@ -2219,4 +2227,264 @@ tr:last-child td {
     scroll-behavior: auto !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* Premium Mission Panel & Cards */
+.premium-card {
+  background: linear-gradient(135deg, rgba(11, 18, 32, 0.98), rgba(18, 28, 43, 0.85)) !important;
+  border: 1px solid rgba(115, 167, 255, 0.2) !important;
+  box-shadow: 0 8px 32px rgba(115, 167, 255, 0.08), var(--shadow) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.premium-card::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  right: -20%;
+  width: 250px;
+  height: 250px;
+  background: radial-gradient(circle, rgba(115, 167, 255, 0.15) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.eyebrow-accent {
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.mission-subtitle {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 0.35rem;
+  margin-bottom: 0.85rem;
+}
+
+.mission-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.available-xp-tag, .focus-cue-tag {
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.available-xp-tag {
+  background: rgba(61, 214, 163, 0.1);
+  color: var(--green);
+  border: 1px solid rgba(61, 214, 163, 0.2);
+}
+
+.focus-cue-tag {
+  background: rgba(245, 184, 75, 0.1);
+  color: var(--amber);
+  border: 1px solid rgba(245, 184, 75, 0.2);
+}
+
+.action-helper {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.action-title {
+  font-size: 1.1rem;
+  color: var(--text);
+  margin-top: 0.1rem;
+  margin-bottom: 0.6rem;
+  display: block;
+}
+
+.primary-action-btn {
+  background: linear-gradient(135deg, var(--green), var(--green-deep));
+  color: #070b12;
+  border: none;
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  width: 100%;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  min-height: 48px;
+}
+
+.primary-action-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(61, 214, 163, 0.35);
+}
+
+.primary-action-btn:active {
+  transform: translateY(0);
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(61, 214, 163, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(61, 214, 163, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(61, 214, 163, 0); }
+}
+
+.pulse-glow {
+  animation: pulse 2.5s infinite;
+}
+
+.override-wrapper {
+  margin-top: 0.6rem;
+  width: 100%;
+}
+
+.skip-btn {
+  width: 100%;
+  text-align: center;
+  margin-top: 0.4rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  padding: 0.5rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.skip-btn:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+
+/* Premium Glass Cards */
+.premium-glass {
+  background: rgba(18, 27, 42, 0.6) !important;
+  backdrop-filter: blur(12px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  box-shadow: var(--shadow) !important;
+  transition: border-color 0.25s ease, transform 0.2s ease;
+}
+
+.premium-glass:hover {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  transform: translateY(-2px);
+}
+
+.card-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  width: 100%;
+}
+
+.xp-cap {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--green);
+}
+
+.xp-bar-container {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: auto;
+  width: 100%;
+}
+
+.xp-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.score-value-flex {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.2rem 0;
+}
+
+.score-value-flex h3 {
+  font-size: 1.85rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.score-value-flex h3 span {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.score-badge-indicator {
+  font-size: 0.72rem;
+  font-weight: 800;
+  background: rgba(115, 167, 255, 0.1);
+  color: var(--blue);
+  border: 1px solid rgba(115, 167, 255, 0.2);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.score-detail-sub {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.3;
+  margin-top: auto;
+}
+
+.streak-main-value {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+
+.streak-fire-icon {
+  color: #ff5e3a;
+  filter: drop-shadow(0 0 6px rgba(255, 94, 58, 0.4));
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-3px); }
+  100% { transform: translateY(0px); }
+}
+
+.streak-sub-details {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.6rem;
+  margin-top: auto;
+  font-size: 0.76rem;
+  width: 100%;
+}
+
+.streak-sub-details div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.streak-sub-details span {
+  color: var(--muted);
+}
+
+.streak-sub-details strong {
+  color: var(--text);
+  font-size: 0.85rem;
 }
