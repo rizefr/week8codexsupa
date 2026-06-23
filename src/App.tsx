@@ -109,6 +109,7 @@ import {
   mergeGamificationSettings,
 } from "./lib/gamification";
 import { calculateMuscleProgress, muscleGroupOrder, muscleLabels, MuscleProgress, musclesForWorkout, weeklyMuscleFocus } from "./lib/muscles";
+import { buildDashboardCoachSummary, buildNextBestActionCue, buildTrendDirection, buildWorkoutCoachSummary } from "./lib/coach";
 
 type Page = "dashboard" | "today" | "routine" | "logger" | "recap" | "progress" | "weight" | "history" | "settings";
 type SaveState = "idle" | "saving" | "cloud" | "local" | "offline" | "syncIssue" | "notSignedIn";
@@ -191,12 +192,23 @@ function MiniChart({
     const y = height - 12 - ((value - min) / spread) * (height - 24);
     return `${x},${y}`;
   });
+  const areaId = `area-${label.replace(/\s+/g, "-")}`;
+  const firstPoint = points[0].split(",");
+  const lastPoint = points[points.length - 1].split(",");
+  const areaPath = `M ${points.join(" L ")} L ${lastPoint[0]},${height} L ${firstPoint[0]},${height} Z`;
   return (
     <svg className="mini-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-      <path d={`M ${points.join(" L ")}`} fill="none" stroke={stroke} strokeWidth="4" strokeLinecap="round" />
+      <defs>
+        <linearGradient id={areaId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path className="chart-area-fill" d={areaPath} fill={`url(#${areaId})`} />
+      <path d={`M ${points.join(" L ")}`} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
       {clean.map((value, index) => {
         const [x, y] = points[index].split(",").map(Number);
-        return <circle key={`${value}-${index}`} cx={x} cy={y} r="4" fill={stroke} />;
+        return <circle key={`${value}-${index}`} cx={x} cy={y} r="3.5" fill={stroke} stroke="#0b1220" strokeWidth="1.5" />;
       })}
     </svg>
   );
@@ -204,12 +216,43 @@ function MiniChart({
 
 function ProgressRing({ value, label }: { value: number; label: string }) {
   const clamped = Math.max(0, Math.min(100, value));
+  const tone = clamped >= 80 ? "var(--green)" : clamped >= 50 ? "var(--amber)" : "var(--red)";
   return (
     <div className="ring" style={{ "--ring-value": `${clamped * 3.6}deg` } as React.CSSProperties}>
       <div>
-        <strong>{Math.round(clamped)}%</strong>
+        <strong style={{ color: tone }}>{Math.round(clamped)}%</strong>
         <span>{label}</span>
       </div>
+    </div>
+  );
+}
+
+function StreakCalendar({ activities, workoutLogs }: { activities: DailyActivity[]; workoutLogs: WorkoutLog[] }) {
+  const today = todayISO();
+  const days: Array<{ date: string; dayLabel: string; dateLabel: string; status: "trained" | "rest" | "missed" | "future" | "today" }> = [];
+  for (let i = 13; i >= 0; i--) {
+    const date = addDays(today, -i);
+    const dayOfWeek = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2);
+    const dateNum = date.split("-")[2];
+    const log = workoutLogs.find((l) => l.date === date && l.status === "completed");
+    const trainingDay = isTrainingDay(dayKeyForDate(date));
+    let status: typeof days[0]["status"] = "future";
+    if (i === 0) status = "today";
+    else if (log && trainingDay) status = "trained";
+    else if (log && !trainingDay) status = "rest";
+    else if (!log && trainingDay && date < today) status = "missed";
+    else if (!log && !trainingDay) status = "rest";
+    days.push({ date, dayLabel: dayOfWeek, dateLabel: dateNum, status });
+  }
+  return (
+    <div className="streak-calendar">
+      {days.map((day) => (
+        <div key={day.date} className="streak-calendar-day">
+          <span>{day.dayLabel}</span>
+          <strong>{day.dateLabel}</strong>
+          <div className={`streak-calendar-dot ${day.status}`} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -884,11 +927,9 @@ function Dashboard({
   const nextBadge = [...gamification.achievements]
     .filter((badge) => !badge.unlocked)
     .sort((a, b) => (b.progressCurrent / Math.max(1, b.progressTarget)) - (a.progressCurrent / Math.max(1, a.progressTarget)))[0];
-  const scoreReasons = [
-    `${weekCompleted}/${trainingDayKeys.length} workouts complete`,
-    `${gamification.executionScore.logging}% logging quality`,
-    `${weeklyPRs.length} PR${weeklyPRs.length === 1 ? "" : "s"} this week`,
-  ];
+  const coach = buildDashboardCoachSummary(data, gamification);
+  const scoreReasons = coach.lockInReasons.slice(0, 3);
+  const nextCue = buildNextBestActionCue(data, gamification);
   const handleMissionAction = () => {
     if (mission.action === "sync") onSyncNow();
     else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
@@ -908,8 +949,8 @@ function Dashboard({
               <h2>{mission.title}</h2>
               <p className="mission-subtitle">{mission.subtitle}</p>
               <div className="mission-tags">
-                <span className="available-xp-tag">⚡ Up to {mission.availableXP} XP available</span>
-                {mission.focusCue && <span className="focus-cue-tag">🎯 {mission.focusCue}</span>}
+                <span className="available-xp-tag">Up to {mission.availableXP} XP available</span>
+                {mission.focusCue && <span className="focus-cue-tag">Focus: {mission.focusCue}</span>}
               </div>
               {!!todayMuscles.length && (
                 <div className="mission-muscles" style={{ marginTop: "0.8rem" }}>
@@ -927,6 +968,7 @@ function Dashboard({
             <div className="mission-action">
               <span className="action-helper">Next Best Action</span>
               <strong className="action-title">{mission.nextBestAction}</strong>
+              <p className="next-action-copy">{nextCue}</p>
               <button className="primary-action-btn pulse-glow" onClick={handleMissionAction}>
                 <Play size={18} />
                 <span>{mission.nextBestAction}</span>
@@ -997,6 +1039,18 @@ function Dashboard({
               </div>
             </article>
 
+            <article className="game-card coach-card premium-glass">
+              <div className="card-header-flex">
+                <span className="eyebrow-accent" style={{ color: "var(--blue)" }}>Coach Insights</span>
+                <Activity size={16} />
+              </div>
+              <div className="coach-mini-stack">
+                <div><span>Recent win</span><strong>{coach.recentWin}</strong></div>
+                <div><span>Next badge</span><strong>{coach.nextBadge}</strong></div>
+                <div><span>Lock in</span><strong>{coach.disciplineCue}</strong></div>
+              </div>
+            </article>
+
             <article className="game-card streak-card telemetry-card premium-glass">
               <div className="card-header-flex">
                 <span className="eyebrow-accent" style={{ color: "#ff5e3a" }}>Streaks</span>
@@ -1028,11 +1082,12 @@ function Dashboard({
           <section className="panel heat-preview-panel">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Activity</p>
-                <h3>Last 5 weeks</h3>
+                <p className="eyebrow">Last 14 days</p>
+                <h3>Training Streak</h3>
               </div>
               <button className="secondary-action" onClick={() => navigate("progress")}>Full view</button>
             </div>
+            <StreakCalendar activities={heatPreview} workoutLogs={data.workoutLogs} />
             <HeatMap activities={heatPreview} compact />
           </section>
 
@@ -1079,11 +1134,15 @@ function Dashboard({
               <strong>{weeklyPRs[0] ? `${weeklyPRs[0].exerciseName} · ${weeklyPRs[0].label}` : "Complete repeat sessions to establish a real PR."}</strong>
               <p style={{ marginTop: "0.35rem", fontSize: "0.86rem", color: "var(--muted)" }}>
                 {weeklyFocus.lightest?.score === 0 
-                  ? `💡 Tip: ${weeklyFocus.lightest.label} has had low volume. Focus on it this week.`
+                  ? `Tip: ${weeklyFocus.lightest.label} has had low volume. Focus on it this week.`
                   : weeklyFocus.leading 
-                    ? `🔥 ${weeklyFocus.leading.label} is leading this week with ${weeklyFocus.leading.sets} sets.` 
+                    ? `${weeklyFocus.leading.label} is leading this week with ${weeklyFocus.leading.sets} sets.`
                     : `Consistency: Keep the routine simple enough to repeat.`}
               </p>
+            </div>
+            <div className="weekly-review-callout coach-callout">
+              <span>Coach read</span>
+              <strong>{coach.weeklyCue}</strong>
             </div>
           </section>
         </>
@@ -1653,16 +1712,22 @@ function RecapPage({
   }
   const trainedMuscles = musclesForWorkout(recap.log);
   const recapMuscleProgress = calculateMuscleProgress(data, gamification.prs, recap.log.date, recap.log.date);
+  const coach = buildWorkoutCoachSummary(recap.log, data, gamification);
   return (
     <div className="content-stack">
       <section className="recap-hero premium-card pulse-glow">
         <span className="eyebrow-accent">Workout Complete</span>
-        <h2 style={{ fontSize: "2.4rem", margin: "0.2rem 0", color: "#3dd6a3", textShadow: "0 0 12px rgba(61, 214, 163, 0.3)" }}>
+        <h2 className="animated-value" style={{ fontSize: "2.4rem", margin: "0.2rem 0", color: "#3dd6a3", textShadow: "0 0 12px rgba(61, 214, 163, 0.3)" }}>
           +{recap.xpEarned} XP
         </h2>
         <p style={{ color: "var(--muted)", fontSize: "0.95rem" }}>
           {recap.log.workoutTitle} · {formatDate(recap.log.date, { weekday: "long", year: "numeric" })}
         </p>
+        {!!coach.bodyParts.length && (
+          <div className="recap-muscle-chips" aria-label="Body parts trained">
+            {coach.bodyParts.slice(0, 6).map((group) => <span key={group}>{muscleLabels[group]}</span>)}
+          </div>
+        )}
         <div className="xp-bar-container" style={{ marginTop: "1rem" }}>
           <div className="xp-bar large" style={{ background: "rgba(255,255,255,0.06)", height: "8px", borderRadius: "4px" }}>
             <i style={{ width: `${recap.level.progressPercent}%`, background: "linear-gradient(90deg, #3dd6a3, #73a7ff)", borderRadius: "4px" }} />
@@ -1681,7 +1746,7 @@ function RecapPage({
             <span style={{ color: "var(--amber)", display: "inline-flex" }}><BarChart3 size={16} /></span>
           </div>
           <div className="score-value-flex">
-            <h3>{recap.workoutScore}<span>/100</span></h3>
+            <h3 className="animated-value">{recap.workoutScore}<span>/100</span></h3>
             <span className="score-badge-indicator" style={{ background: recap.workoutScore >= 80 ? "rgba(61, 214, 163, 0.1)" : "rgba(245, 184, 75, 0.1)", color: recap.workoutScore >= 80 ? "var(--green)" : "var(--amber)", border: recap.workoutScore >= 80 ? "1px solid rgba(61, 214, 163, 0.2)" : "1px solid rgba(245, 184, 75, 0.2)" }}>
               {recap.workoutScore >= 90 ? "Perfect" : recap.workoutScore >= 75 ? "Excellent" : "Solid"}
             </span>
@@ -1695,7 +1760,7 @@ function RecapPage({
             <span style={{ color: "var(--blue)", display: "inline-flex" }}><Dumbbell size={16} /></span>
           </div>
           <div className="score-value-flex">
-            <h3>{recap.setsCompleted}<span> sets</span></h3>
+            <h3 className="animated-value">{recap.setsCompleted}<span> sets</span></h3>
           </div>
           <p className="score-detail-sub">{recap.exercisesCompleted} exercises logged.</p>
         </article>
@@ -1706,7 +1771,7 @@ function RecapPage({
             <span style={{ color: "var(--green)", display: "inline-flex" }}><CheckCircle2 size={16} /></span>
           </div>
           <div className="score-value-flex">
-            <h3>{recap.loggingQuality}<span>%</span></h3>
+            <h3 className="animated-value">{recap.loggingQuality}<span>%</span></h3>
           </div>
           <p className="score-detail-sub">Set details and variables completed.</p>
         </article>
@@ -1726,6 +1791,37 @@ function RecapPage({
       {!!trainedMuscles.length && (
         <MuscleMapPanel progress={recapMuscleProgress} title="Workout muscle impact" rangeLabel="This session" compact />
       )}
+
+      <section className="panel coach-recap-panel premium-glass">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow-accent" style={{ color: "var(--green)" }}>Coach Feedback</span>
+            <h2>3 wins and next focus</h2>
+          </div>
+        </div>
+        <div className="coach-win-grid">
+          {coach.wins.map((win) => (
+            <article key={`${win.title}-${win.detail}`} className={classNames("coach-insight-card", win.tone)}>
+              <span>{win.title}</span>
+              <strong>{win.detail}</strong>
+            </article>
+          ))}
+        </div>
+        <article className={classNames("coach-next-focus", coach.nextFocus.tone)}>
+          <span>{coach.nextFocus.title}</span>
+          <strong>{coach.nextFocus.detail}</strong>
+        </article>
+        {!!coach.exerciseNotes.length && (
+          <div className="progression-note-list">
+            {coach.exerciseNotes.slice(0, 4).map((note) => (
+              <article key={note.exerciseName}>
+                <h4>{note.exerciseName}</h4>
+                {note.insights.map((insight) => <p key={`${note.exerciseName}-${insight.title}`}>{insight.title}: {insight.detail}</p>)}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="game-grid two">
         <article className="panel premium-glass">
@@ -1752,8 +1848,12 @@ function RecapPage({
         <div className="section-heading">
           <div>
             <span className="eyebrow-accent" style={{ color: "var(--amber)" }}>Next time</span>
-            <h3>{recap.nextFocus}</h3>
+            <h3>{coach.nextFocus.detail}</h3>
           </div>
+        </div>
+        <div className="lock-after-training">
+          <span>Lock in after training</span>
+          <strong>{coach.disciplineCue}</strong>
         </div>
         <div className="recap-events" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
           {recap.xpEvents.map((event) => (
@@ -2191,7 +2291,7 @@ function PRTimeline({ gamification }: { gamification: GamificationSummary }) {
           <article key={pr.id} className="pr-timeline-item">
             <div className="pr-timeline-marker"><Dumbbell size={16} /></div>
             <div>
-              <div className="pr-timeline-meta"><time>{formatDate(pr.date)}</time>{muscle && <span>{muscleLabels[muscle]}</span>}{xp && <strong>+{xp} XP</strong>}</div>
+              <div className="pr-timeline-meta"><time>{formatDate(pr.date)}</time>{muscle && <span>{muscleLabels[muscle]}</span>}{xp && <strong>+{xp} XP</strong>}<span className="pr-sparkle">PR</span></div>
               <h4>{pr.exerciseName}</h4>
               <p>{pr.label}</p>
             </div>
@@ -2524,9 +2624,18 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
 }
 
 function ChartPanel({ title, values, stroke }: { title: string; values: number[]; stroke?: string }) {
+  const trend = buildTrendDirection(values);
+  const clean = values.filter((value) => Number.isFinite(value) && value > 0);
+  const last = clean.at(-1);
+  const previous = clean.at(-2);
+  const delta = last !== undefined && previous !== undefined ? last - previous : null;
   return (
     <article className="chart-panel">
-      <h4>{title}</h4>
+      <div className="chart-panel-heading">
+        <h4>{title}</h4>
+        <span className={classNames("trend-chip", trend.tone)}>{trend.label}</span>
+      </div>
+      {delta !== null && <p className="chart-delta">Last vs previous: {delta >= 0 ? "+" : ""}{Math.round(delta).toLocaleString()}</p>}
       <MiniChart values={values} label={title} stroke={stroke} />
     </article>
   );
