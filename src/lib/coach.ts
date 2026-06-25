@@ -1,12 +1,15 @@
-import { AppData, Exercise, ExerciseLog, MuscleGroup, SetLog, WorkoutLog } from "../types";
+import { AppData, BodyWeightLog, Exercise, ExerciseLog, MuscleGroup, ReplacementOption, SetLog, WorkoutLog } from "../types";
 import { trainingDayKeys } from "../data/routine";
 import { getCycleInfo, todayISO } from "./date";
 import {
   bestAssistance,
   bestTimedSet,
+  canonicalExerciseKey,
   completedSetCount,
   completedWorkoutsThisWeek,
   effectiveProgramStartDate,
+  exerciseAliasLabel,
+  exerciseDisplayName,
   exerciseSessions,
   exerciseVolume,
   findExercise,
@@ -57,6 +60,23 @@ export interface DashboardCoachSummary {
   lockInReasons: string[];
 }
 
+export interface ExerciseHelpContent {
+  title: string;
+  subtitle?: string;
+  alias?: string;
+  faqs: Array<{ question: string; answer: string }>;
+  replacements: ReplacementOption[];
+}
+
+export interface BodyCompositionSummary {
+  latest?: BodyWeightLog;
+  latestBodyFat?: BodyWeightLog;
+  leanMass?: number;
+  fatMass?: number;
+  bodyFatTrend?: number;
+  note: string;
+}
+
 function clampList<T>(items: T[], limit: number): T[] {
   return items.slice(0, limit);
 }
@@ -82,6 +102,61 @@ function averageRir(sets: SetLog[]): number | null {
 
 function isCompoundLike(exercise: Exercise): boolean {
   return /press|bench|pull-up|dip|row|squat|deadlift|rdl|split squat|pullover/i.test(exercise.name);
+}
+
+function movementSpecificInsight(exerciseLog: ExerciseLog, exercise: Exercise): CoachInsight | null {
+  const key = canonicalExerciseKey(exercise);
+  const trackingType = trackingTypeForExercise(exercise);
+  const text = `${exerciseLog.notes ?? ""} ${exerciseLog.sets.map((set) => set.notes ?? "").join(" ")}`;
+
+  if (key === "db-romanian-deadlift") {
+    if (/lower back|back hurt|back pain|grip|forearm/i.test(text)) {
+      return {
+        title: "RDL: hold steady",
+        detail: "If grip or low back is limiting, keep load fixed, shorten range if needed, and make the hinge cleaner before adding weight.",
+        tone: "recovery",
+      };
+    }
+    return {
+      title: "RDL progression",
+      detail: "Add reps first. Do not chase failure; hamstring stretch and back position matter more than load.",
+      tone: "focus",
+    };
+  }
+
+  if (trackingType === "assistance-reps") {
+    return {
+      title: "Assistance logic",
+      detail: "Treat assistance as support, not load. Reduce assistance only after reps stay stable or improve.",
+      tone: "focus",
+    };
+  }
+
+  if (key === "db-lateral-raise" || key === "db-lateral-raise-mechanical") {
+    return {
+      title: "Lateral raise rule",
+      detail: "Add reps before load. Keep traps quiet and stop the set when shoulder path gets sloppy.",
+      tone: "focus",
+    };
+  }
+
+  if (trackingType === "bodyweight-reps") {
+    return {
+      title: "Bodyweight progression",
+      detail: "Progress with cleaner reps and control. Do not add load or extra sets.",
+      tone: "focus",
+    };
+  }
+
+  if (trackingType === "timed") {
+    return {
+      title: "Core progression",
+      detail: "Add seconds only while ribs, pelvis, and breathing stay controlled.",
+      tone: "focus",
+    };
+  }
+
+  return null;
 }
 
 function sameLoadImprovement(current: ExerciseLog, previous: ExerciseLog, exercise: Exercise): number {
@@ -215,6 +290,7 @@ export function buildExerciseFeedback(exerciseLog: ExerciseLog, workout: Workout
     topRangeMessage(sets, exercise),
     setDropMessage(sets, exercise),
     rirMessage(sets, exercise, workout.weekInCycle),
+    movementSpecificInsight(exerciseLog, exercise),
   ].filter((item): item is CoachInsight => Boolean(item));
 
   if (!insights.length) {
@@ -226,8 +302,61 @@ export function buildExerciseFeedback(exerciseLog: ExerciseLog, workout: Workout
   }
 
   return {
-    exerciseName: exercise.name,
+    exerciseName: exerciseDisplayName(exercise, exerciseLog),
     insights: clampList(insights, 2),
+  };
+}
+
+export function buildExerciseHelp(exercise?: Exercise): ExerciseHelpContent | null {
+  if (!exercise) return null;
+  const trackingType = trackingTypeForExercise(exercise);
+  const key = canonicalExerciseKey(exercise);
+  const alias = exerciseAliasLabel(exercise);
+  const faqs: ExerciseHelpContent["faqs"] = [];
+
+  if (key === "db-romanian-deadlift") {
+    faqs.push(
+      {
+        question: "Lower back hurts during RDL?",
+        answer: "Stop for sharp pain. Otherwise reduce load, shorten range, brace harder, keep DBs close, and hinge from the hips instead of squatting it.",
+      },
+      {
+        question: "Grip gives out before hamstrings?",
+        answer: "Hold load steady, slow the eccentric, and keep clean reps. If grip keeps stealing the target, manually choose a lower-grip replacement.",
+      },
+      {
+        question: "Cannot judge RIR 1-2?",
+        answer: "Use rep speed and form quality. RIR is an estimate; do not force ugly reps just to match a target.",
+      },
+    );
+  } else if (trackingType === "assistance-reps") {
+    faqs.push({
+      question: "How do I progress assisted work?",
+      answer: "Add reps first. Reduce assistance only when reps and range stay stable. Lower assistance is better only if performance does not fall apart.",
+    });
+  } else if (trackingType === "bodyweight-reps" || trackingType === "timed") {
+    faqs.push({
+      question: "How do I progress this?",
+      answer: trackingType === "timed" ? "Add seconds only while control stays clean." : "Add cleaner reps before changing the variation. Do not add random load.",
+    });
+  } else if (key === "db-lateral-raise" || key === "db-lateral-raise-mechanical") {
+    faqs.push({
+      question: "When should I add weight?",
+      answer: "Only after reps are high and clean. If traps take over or the path changes, stay at the same load.",
+    });
+  } else {
+    faqs.push({
+      question: "What should I focus on?",
+      answer: progressionAdvice({ id: "help", exerciseId: exercise.id, completed: false, sets: [] }),
+    });
+  }
+
+  return {
+    title: `${exercise.name} Help`,
+    subtitle: exercise.movementPattern,
+    alias,
+    faqs,
+    replacements: exercise.replacementOptions ?? [],
   };
 }
 
@@ -266,7 +395,9 @@ export function buildWorkoutCoachSummary(log: WorkoutLog, data: AppData, gamific
       prs.length ? `${prs.length} PR signal${prs.length === 1 ? "" : "s"}` : "baseline data strengthened",
       `${sets} sets completed`,
     ],
-    disciplineCue: "Training is done. Use the momentum: 25 minutes on outreach, site polish, planning, or one business action before scrolling.",
+    disciplineCue: gamification.settings.showDisciplineCues === false
+      ? ""
+      : "Training is done. Use the momentum: 25 focused minutes on outreach, site polish, planning, or one business action before scrolling.",
     bodyParts,
   };
 }
@@ -324,9 +455,11 @@ export function buildDashboardCoachSummary(data: AppData, gamification: Gamifica
     recentWin,
     weeklyCue: buildWeeklyFocus(data, gamification).detail,
     nextBadge: nextBadge ? `${nextBadge.title}: ${nextBadge.progressCurrent}/${nextBadge.progressTarget}` : "All current badges are unlocked.",
-    disciplineCue: weekCompleted >= trainingDayKeys.length
-      ? "Week handled. Put the same discipline into one business action today."
-      : `${Math.max(0, trainingDayKeys.length - weekCompleted)} workout${trainingDayKeys.length - weekCompleted === 1 ? "" : "s"} left for a strong week.`,
+    disciplineCue: gamification.settings.showDisciplineCues === false
+      ? `${Math.max(0, trainingDayKeys.length - weekCompleted)} workout${trainingDayKeys.length - weekCompleted === 1 ? "" : "s"} left for a strong week.`
+      : weekCompleted >= trainingDayKeys.length
+        ? "Week handled. Put the same discipline into one business action today."
+        : `${Math.max(0, trainingDayKeys.length - weekCompleted)} workout${trainingDayKeys.length - weekCompleted === 1 ? "" : "s"} left for a strong week.`,
     lockInReasons: [
       `${weekCompleted}/${trainingDayKeys.length} workouts this week`,
       `${gamification.executionScore.logging}% logging quality`,
@@ -340,9 +473,41 @@ export function buildNextBestActionCue(data: AppData, gamification: Gamification
   const today = todayISO();
   const todayLog = data.workoutLogs.find((log) => log.date === today && (log.status === "draft" || log.status === "completed"));
   if (todayLog?.status === "draft") return "You have a draft waiting. Continue it before starting anything else.";
-  if (todayLog?.status === "completed") return "Workout done. Use the training momentum on one focused business task before scrolling.";
+  if (todayLog?.status === "completed") {
+    return gamification.settings.showDisciplineCues === false
+      ? "Workout done. Review the recap or check progress."
+      : "Workout done. Use the training momentum on one focused business task before scrolling.";
+  }
   if (gamification.level.xpToNext <= 100) return `${gamification.level.xpToNext} XP to Level ${gamification.level.level + 1}.`;
   return buildProgressionSuggestion(data);
+}
+
+export function buildBodyCompositionSummary(weights: BodyWeightLog[]): BodyCompositionSummary {
+  const sorted = [...weights].sort((a, b) => b.date.localeCompare(a.date));
+  const latest = sorted[0];
+  const bodyFatEntries = sorted.filter((entry) => typeof entry.bodyFatPercent === "number" && entry.bodyFatPercent > 0);
+  const latestBodyFat = bodyFatEntries[0];
+
+  if (!latest || !latestBodyFat) {
+    return {
+      latest,
+      latestBodyFat,
+      note: "Add body fat only when you have a reasonable estimate. Scale weight alone is still useful.",
+    };
+  }
+
+  const fatMass = latest.weight * (latestBodyFat.bodyFatPercent! / 100);
+  const leanMass = latest.weight - fatMass;
+  const oldestBodyFat = bodyFatEntries.at(-1);
+
+  return {
+    latest,
+    latestBodyFat,
+    fatMass,
+    leanMass,
+    bodyFatTrend: oldestBodyFat && oldestBodyFat.id !== latestBodyFat.id ? latestBodyFat.bodyFatPercent! - oldestBodyFat.bodyFatPercent! : undefined,
+    note: "Recomp target: train hard, keep protein high, stay around maintenance to a small surplus, and judge weekly trends instead of daily noise.",
+  };
 }
 
 export function buildTrendDirection(values: number[]): { label: string; tone: CoachTone } {

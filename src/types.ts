@@ -11,6 +11,13 @@ export type ExerciseKind = "strength" | "timed" | "cardio" | "rest";
 export type ExerciseTrackingType = "weighted-reps" | "assistance-reps" | "bodyweight-reps" | "timed" | "cardio" | "rest-checkin";
 export type ProgramPhase = "setup" | "growth" | "push";
 export type LogStatus = "draft" | "completed";
+export type ExerciseRiskLevel = "low" | "moderate" | "higher";
+export type ExerciseProgressionRule =
+  | "add-reps-first"
+  | "add-load-after-top-range"
+  | "reduce-assistance-after-reps"
+  | "increase-time"
+  | "control-quality";
 export type MuscleGroup =
   | "lats"
   | "upper-back"
@@ -36,11 +43,25 @@ export interface SetTarget {
   side?: "left" | "right" | "both";
 }
 
+export interface ReplacementOption {
+  name: string;
+  reason: string;
+  trackingType?: ExerciseTrackingType;
+}
+
 export interface Exercise {
   id: string;
   name: string;
+  canonicalExerciseId?: string;
+  aliases?: string[];
+  commonName?: string;
   kind: ExerciseKind;
   trackingType?: ExerciseTrackingType;
+  movementPattern?: string;
+  riskLevel?: ExerciseRiskLevel;
+  primaryProgression?: ExerciseProgressionRule;
+  warningSigns?: string[];
+  replacementOptions?: ReplacementOption[];
   sets?: number;
   reps?: string;
   seconds?: string;
@@ -122,6 +143,7 @@ export interface GamificationSettings {
   badgeUnlocks: Record<string, string>;
   seenRecaps: string[];
   bodyWeightPromptSkips?: string[];
+  showDisciplineCues?: boolean;
 }
 
 export interface SetLog {
@@ -142,6 +164,9 @@ export interface SetLog {
 export interface ExerciseLog {
   id: string;
   exerciseId: string;
+  performedExerciseName?: string;
+  replacementForExerciseId?: string;
+  replacementReason?: string;
   completed: boolean;
   notes?: string;
   sets: SetLog[];
@@ -184,6 +209,7 @@ export interface BodyWeightLog {
   id: string;
   date: string;
   weight: number;
+  bodyFatPercent?: number;
   note?: string;
   updatedAt?: string;
 }

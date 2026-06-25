@@ -8,6 +8,8 @@ import {
   completedExerciseCount,
   completedSetCount,
   effectiveProgramStartDate,
+  canonicalExerciseKey,
+  exerciseMatches,
   exerciseVolume,
   findExercise,
   isTrainingDay,
@@ -158,6 +160,7 @@ export const defaultGamificationSettings: GamificationSettings = {
   badgeUnlocks: {},
   seenRecaps: [],
   bodyWeightPromptSkips: [],
+  showDisciplineCues: true,
 };
 
 const HARD_CARDIO_RE = /\b(HIIT|sprint|running|run|interval|max effort|hard stair|stairmaster interval|all out)\b/i;
@@ -329,7 +332,7 @@ export function detectPRs(data: AppData): PRRecord[] {
         const exercise = findExercise(exerciseLog.exerciseId);
         if (!exercise || exercise.prEligible === false) return;
         const name = exercise.name;
-        const normalized = normalizedExerciseName(name);
+        const normalized = canonicalExerciseKey(exercise);
         const completedSets = exerciseLog.sets.filter((set) => set.completed);
         if (!completedSets.length) return;
 
@@ -926,7 +929,7 @@ function nextFocusCue(data: AppData, date: string, overrideDayKey?: DayKey): str
   const prior = canonicalWorkoutLogs(data.workoutLogs)
     .filter((log) => log.date < date && log.status === "completed")
     .flatMap((log) => log.exerciseLogs.map((exerciseLog) => ({ log, exerciseLog, exercise: findExercise(exerciseLog.exerciseId) })))
-    .filter((item) => item.exercise?.name === firstExercise?.name)
+    .filter((item) => exerciseMatches(item.exercise, firstExercise))
     .at(-1);
   if (prior) return `Next target: add 1 clean rep on ${prior.exercise?.name} before increasing weight.`;
   return workout.intent ?? `Focus: ${workout.subtitle}.`;

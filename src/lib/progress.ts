@@ -22,6 +22,44 @@ export function findExercise(exerciseId: string): Exercise | undefined {
   return allExercises.find((exercise) => exercise.id === exerciseId);
 }
 
+export function normalizeExerciseName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+export function canonicalExerciseKey(exerciseOrName?: Exercise | string): string {
+  if (!exerciseOrName) return "unknown";
+  if (typeof exerciseOrName !== "string") {
+    return exerciseOrName.canonicalExerciseId ?? normalizeExerciseName(exerciseOrName.name);
+  }
+  const normalized = normalizeExerciseName(exerciseOrName);
+  const match = allExercises.find((exercise) => {
+    const names = [exercise.name, exercise.commonName, ...(exercise.aliases ?? [])].filter(Boolean) as string[];
+    return names.some((name) => normalizeExerciseName(name) === normalized);
+  });
+  return match?.canonicalExerciseId ?? normalized;
+}
+
+export function exerciseMatches(exercise: Exercise | undefined, query: Exercise | string): boolean {
+  if (!exercise) return false;
+  return canonicalExerciseKey(exercise) === canonicalExerciseKey(query);
+}
+
+export function exerciseDisplayName(exercise: Exercise | undefined, exerciseLog?: ExerciseLog): string {
+  if (!exercise) return exerciseLog?.performedExerciseName ?? "Workout item";
+  return exerciseLog?.performedExerciseName ?? exercise.name;
+}
+
+export function exerciseAliasLabel(exercise?: Exercise): string {
+  if (!exercise?.commonName && !exercise?.aliases?.length) return "";
+  if (exercise.commonName) return `Also called ${exercise.commonName}`;
+  const firstAlias = exercise.aliases?.[0];
+  return firstAlias ? `Also called ${firstAlias}` : "";
+}
+
 export function programPhaseFromWeekInCycle(weekInCycle = 1): ProgramPhase {
   const normalized = ((Math.max(1, weekInCycle) - 1) % 8) + 1;
   if (normalized <= 2) return "setup";
@@ -413,8 +451,15 @@ export function progressionAdvice(log: ExerciseLog): string {
   if (containsPainOrRegression(text)) {
     return "Hold steady or reduce range/volume. Pain or regression language was logged.";
   }
+  const trackingType = trackingTypeForExercise(exercise);
+  if (exercise.primaryProgression === "control-quality" || trackingType === "bodyweight-reps") {
+    return "Progress with cleaner reps and control first. Do not add load or extra volume.";
+  }
   if (trackingTypeForExercise(exercise) === "timed") {
     return "Add seconds only while bracing stays clean. Stop when control breaks.";
+  }
+  if (exercise.canonicalExerciseId === "db-romanian-deadlift") {
+    return "Add reps before load. If grip or lower back limits the set, hold load steady and clean up tempo/range.";
   }
   const top = topRepTarget(exercise.reps);
   if (!top) return "Keep chasing cleaner reps before changing load.";
@@ -426,7 +471,6 @@ export function progressionAdvice(log: ExerciseLog): string {
     }
     return numericValue(set.reps) >= top;
   });
-  const trackingType = trackingTypeForExercise(exercise);
   if (hitTop && trackingType === "assistance-reps") return "Reduce assistance next time only if reps and form stayed solid.";
   if (hitTop && trackingType === "weighted-reps") return "Add weight next time if form, range, sleep, and joints were solid.";
   if (hitTop) return "Make the reps cleaner or add a small rep target next time; do not add load unless the routine calls for it.";
@@ -439,7 +483,7 @@ export function exerciseSessions(logs: WorkoutLog[], exerciseName: string) {
     .flatMap((log) =>
       log.exerciseLogs
         .map((exerciseLog) => ({ workout: log, exerciseLog, exercise: findExercise(exerciseLog.exerciseId) }))
-        .filter((item) => item.exercise?.name === exerciseName),
+        .filter((item) => exerciseMatches(item.exercise, exerciseName)),
     )
     .sort((a, b) => a.workout.date.localeCompare(b.workout.date));
 }

@@ -41,6 +41,7 @@ import {
   allExercises,
   autoCompletedSet,
   bodyWeightChange,
+  canonicalExerciseKey,
   cardioInputsAreValid,
   completedExerciseCount,
   completedProgramWorkouts,
@@ -52,6 +53,7 @@ import {
   cycleWorkoutTarget,
   effectiveProgramStartDate,
   effortLabelForExercise,
+  exerciseAliasLabel,
   exerciseNameForId,
   exerciseSessions,
   exerciseVolume,
@@ -109,7 +111,7 @@ import {
   mergeGamificationSettings,
 } from "./lib/gamification";
 import { calculateMuscleProgress, muscleGroupOrder, muscleLabels, MuscleProgress, musclesForWorkout, weeklyMuscleFocus } from "./lib/muscles";
-import { buildDashboardCoachSummary, buildNextBestActionCue, buildTrendDirection, buildWorkoutCoachSummary } from "./lib/coach";
+import { buildBodyCompositionSummary, buildDashboardCoachSummary, buildExerciseHelp, buildNextBestActionCue, buildTrendDirection, buildWorkoutCoachSummary } from "./lib/coach";
 
 type Page = "dashboard" | "today" | "routine" | "logger" | "recap" | "progress" | "weight" | "history" | "settings";
 type SaveState = "idle" | "saving" | "cloud" | "local" | "offline" | "syncIssue" | "notSignedIn";
@@ -1415,6 +1417,54 @@ function rirSummary(exercise: Exercise): string {
   return `${label} ${targetRIRForExercise(exercise)}`;
 }
 
+function ExerciseHelpDisclosure({
+  exercise,
+  onUseReplacement,
+}: {
+  exercise?: Exercise;
+  onUseReplacement?: (replacementName: string, reason: string) => void;
+}) {
+  const help = buildExerciseHelp(exercise);
+  if (!help) return null;
+  return (
+    <details className="exercise-help">
+      <summary>
+        <BookOpen size={15} />
+        <span>Exercise help</span>
+      </summary>
+      <div className="exercise-help-body">
+        <div>
+          <strong>{help.title}</strong>
+          {help.subtitle && <p>{help.subtitle}</p>}
+          {help.alias && <small>{help.alias}</small>}
+        </div>
+        {help.faqs.map((faq) => (
+          <div key={faq.question} className="help-faq">
+            <span>{faq.question}</span>
+            <p>{faq.answer}</p>
+          </div>
+        ))}
+        {!!help.replacements.length && (
+          <div className="replacement-list">
+            <span>Manual replacement options</span>
+            {help.replacements.map((replacement) => (
+              <button
+                key={replacement.name}
+                type="button"
+                className="ghost-button replacement-option"
+                onClick={() => onUseReplacement?.(replacement.name, replacement.reason)}
+              >
+                <strong>{replacement.name}</strong>
+                <small>{replacement.reason}</small>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolean }) {
   const workout = workoutDays[dayKey];
   return (
@@ -1453,9 +1503,11 @@ function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolea
                   <span>{exercise.target}</span>
                 </div>
                 {exercise.supersetLabel && <span className="superset-chip">{exercise.supersetLabel}</span>}
+                {exerciseAliasLabel(exercise) && <small>{exerciseAliasLabel(exercise)}</small>}
                 {!compact && <p>{exercise.notes}</p>}
                 {exercise.effortCue && exercise.effortMode !== "control" && <small>{exercise.effortCue}</small>}
                 {exercise.logHint && <small>{exercise.logHint}</small>}
+                {!compact && <ExerciseHelpDisclosure exercise={exercise} />}
               </div>
             </article>
           ))}
@@ -1851,10 +1903,12 @@ function RecapPage({
             <h3>{coach.nextFocus.detail}</h3>
           </div>
         </div>
-        <div className="lock-after-training">
-          <span>Lock in after training</span>
-          <strong>{coach.disciplineCue}</strong>
-        </div>
+        {coach.disciplineCue && (
+          <div className="lock-after-training">
+            <span>Lock in after training</span>
+            <strong>{coach.disciplineCue}</strong>
+          </div>
+        )}
         <div className="recap-events" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
           {recap.xpEvents.map((event) => (
             <span key={event.key} className="focus-cue-tag" style={{ background: "rgba(255,255,255,0.03)", color: "var(--muted)", border: "1px solid var(--line)" }}>
@@ -1974,6 +2028,21 @@ function LogExerciseCard({
   const rirTarget = targetRIRForExercise(exercise, log.weekInCycle);
   const showRir = rirRequiredForExercise(exercise);
   const effortLabel = effortLabelForExercise(exercise);
+  const displayExerciseName = exerciseLog.performedExerciseName ?? exercise.name;
+  const aliasLabel = exerciseAliasLabel(exercise);
+  const applyReplacement = (replacementName: string, reason: string) => {
+    onChange({
+      ...exerciseLog,
+      performedExerciseName: replacementName,
+      replacementForExerciseId: exercise.id,
+      replacementReason: reason,
+      notes: exerciseLog.notes ? `${exerciseLog.notes}\nReplacement: ${reason}` : `Replacement: ${reason}`,
+    });
+  };
+  const clearReplacement = () => {
+    const { performedExerciseName, replacementForExerciseId, replacementReason, ...rest } = exerciseLog;
+    onChange(rest);
+  };
   const copyPreviousLoad = () => {
     if (!previous || !showLoad) return;
     onChange({
@@ -1990,10 +2059,14 @@ function LogExerciseCard({
       <div className="log-card-heading">
         <div>
           <p className="eyebrow">{exercise.target}</p>
-          <h3>{exercise.name}</h3>
+          <h3>{displayExerciseName}</h3>
           <p>
             {exercise.sets} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest} · {effortLabel} {rirTarget}
           </p>
+          {exerciseLog.performedExerciseName && (
+            <span className="focus-cue-tag">Replacement for {exercise.name}: {exerciseLog.replacementReason}</span>
+          )}
+          {aliasLabel && <small>{aliasLabel}</small>}
           {exercise.supersetLabel && <span className="superset-chip">{exercise.supersetLabel}</span>}
         </div>
         <span className={classNames("completion-state", exerciseLog.completed && "complete")}>
@@ -2002,6 +2075,12 @@ function LogExerciseCard({
       </div>
       <div className="guidance-card">{exercise.notes}</div>
       {exercise.logHint && <div className="guidance-card">{exercise.logHint}</div>}
+      <ExerciseHelpDisclosure exercise={exercise} onUseReplacement={applyReplacement} />
+      {exerciseLog.performedExerciseName && (
+        <button type="button" className="mini-action" onClick={clearReplacement}>
+          Use planned exercise instead
+        </button>
+      )}
       {previous && (
         <div className="previous-box">
           <strong>Previous:</strong> {formatDate(previous.workout.date)} ·{" "}
@@ -2330,7 +2409,7 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
     return entryWeek >= Math.max(1, cycleInfo.programWeek - 7);
   });
   const sessions = exerciseSessions(filteredLogs, selectedExercise);
-  const selectedExerciseMeta = sessions[0]?.exercise ?? allExercises.find((exercise) => exercise.name === selectedExercise);
+  const selectedExerciseMeta = sessions[0]?.exercise ?? allExercises.find((exercise) => canonicalExerciseKey(exercise) === canonicalExerciseKey(selectedExercise));
   const trendLabels = trendMetricLabels(selectedExerciseMeta);
   const selectedTrackingType = trackingTypeForExercise(selectedExerciseMeta);
   const primaryPoints = sessions.map((session) => progressMetricValue(session.exerciseLog, session.exercise));
@@ -2714,19 +2793,25 @@ function BadgeGrid({ achievements }: { achievements: Achievement[] }) {
 function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightLog) => void }) {
   const [date, setDate] = useState(todayISO());
   const [weight, setWeight] = useState("");
+  const [bodyFatPercent, setBodyFatPercent] = useState("");
   const [note, setNote] = useState("");
   const sorted = [...data.bodyWeights].sort((a, b) => a.date.localeCompare(b.date));
   const latest = latestBodyWeight(data.bodyWeights);
   const start = sorted[0];
   const change = bodyWeightChange(data.bodyWeights);
   const average = sevenDayAverage(data.bodyWeights);
+  const recomp = buildBodyCompositionSummary(data.bodyWeights);
+  const bodyFatValues = sorted.map((entry) => entry.bodyFatPercent).filter((value): value is number => typeof value === "number" && value > 0);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const parsed = Number(weight);
     if (!Number.isFinite(parsed) || parsed <= 0) return;
-    onSave({ id: createId("weight"), date, weight: parsed, note });
+    const parsedBodyFat = bodyFatPercent ? Number(bodyFatPercent) : undefined;
+    if (parsedBodyFat !== undefined && (!Number.isFinite(parsedBodyFat) || parsedBodyFat <= 0 || parsedBodyFat > 60)) return;
+    onSave({ id: createId("weight"), date, weight: parsed, bodyFatPercent: parsedBodyFat, note });
     setWeight("");
+    setBodyFatPercent("");
     setNote("");
   };
 
@@ -2749,6 +2834,10 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
             <input value={weight} onChange={(event) => setWeight(event.target.value)} inputMode="decimal" placeholder="142.0" required />
           </label>
           <label className="field-label">
+            Body fat % optional
+            <input value={bodyFatPercent} onChange={(event) => setBodyFatPercent(event.target.value)} inputMode="decimal" placeholder="16.5" />
+          </label>
+          <label className="field-label">
             Note
             <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Morning weigh-in, sodium, sleep..." />
           </label>
@@ -2762,8 +2851,16 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
           <StatCard icon={Activity} label="Current weight" value={latest ? `${latest.weight.toFixed(1)} lb` : "No data"} detail={latest ? formatDate(latest.date) : "No current entry yet."} />
           <StatCard icon={LineChart} label="Change since start" value={change === null ? "No trend" : `${change >= 0 ? "+" : ""}${change.toFixed(1)} lb`} detail="Small surplus or maintenance is the target." />
           <StatCard icon={BarChart3} label="7-day average" value={average === null ? "Need 7" : `${average.toFixed(1)} lb`} detail="Appears after 7 weigh-ins." />
+          <StatCard icon={Activity} label="Body fat estimate" value={recomp.latestBodyFat?.bodyFatPercent ? `${recomp.latestBodyFat.bodyFatPercent.toFixed(1)}%` : "Optional"} detail={recomp.latestBodyFat ? formatDate(recomp.latestBodyFat.date) : "Example: 16.5, only if you confirm it."} />
+          <StatCard icon={Dumbbell} label="Estimated lean mass" value={recomp.leanMass ? `${recomp.leanMass.toFixed(1)} lb` : "No estimate"} detail={recomp.fatMass ? `${recomp.fatMass.toFixed(1)} lb estimated fat mass` : "Requires body fat %."} />
         </div>
         <ChartPanel title="Body weight trend" values={sorted.map((entry) => entry.weight)} stroke="#73a7ff" />
+        {!!bodyFatValues.length && <ChartPanel title="Body fat estimate trend" values={bodyFatValues} stroke="#b77dff" />}
+        <div className="recomp-card">
+          <strong>Recomp guidance</strong>
+          <p>{recomp.note}</p>
+          <small>Protein target: roughly 100-130 g/day. Keep calories around maintenance to a small surplus; do not panic over daily scale movement.</small>
+        </div>
       </section>
 
       <section className="panel">
@@ -2780,6 +2877,7 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
                 <tr>
                   <th>Date</th>
                   <th>Weight</th>
+                  <th>Body fat</th>
                   <th>Note</th>
                 </tr>
               </thead>
@@ -2788,6 +2886,7 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
                   <tr key={entry.id}>
                     <td>{formatDate(entry.date)}</td>
                     <td>{entry.weight.toFixed(1)} lb</td>
+                    <td>{entry.bodyFatPercent ? `${entry.bodyFatPercent.toFixed(1)}%` : "-"}</td>
                     <td>{entry.note}</td>
                   </tr>
                 ))}
@@ -2810,7 +2909,7 @@ function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (dat
   const cycles = Array.from(new Set(data.workoutLogs.map((log) => String(log.cycle ?? Math.floor((log.week - 1) / 8) + 1)))).sort();
   const filtered = data.workoutLogs.filter((log) => {
     const query = filter.toLowerCase();
-    const exerciseText = log.exerciseLogs.map((item) => exerciseNameForId(item.exerciseId)).join(" ");
+    const exerciseText = log.exerciseLogs.map((item) => item.performedExerciseName ?? exerciseNameForId(item.exerciseId)).join(" ");
     const haystack = `${log.workoutTitle} ${log.date} ${log.notes ?? ""} ${exerciseText}`.toLowerCase();
     const cycle = String(log.cycle ?? Math.floor((log.week - 1) / 8) + 1);
     return (
@@ -2871,6 +2970,14 @@ function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (dat
                     <span>{Math.round(workoutVolume(log)).toLocaleString()} volume</span>
                   </div>
                   {log.notes && <p>{log.notes}</p>}
+                  {log.exerciseLogs.some((item) => item.performedExerciseName) && (
+                    <div className="override-note">
+                      {log.exerciseLogs
+                        .filter((item) => item.performedExerciseName)
+                        .map((item) => `${item.performedExerciseName} for ${exerciseNameForId(item.exerciseId)}`)
+                        .join(" · ")}
+                    </div>
+                  )}
                 </div>
                 <button className="secondary-action" onClick={() => navigate("logger", log.id)}>Open</button>
               </article>
@@ -3080,6 +3187,14 @@ function SettingsPage({
               onChange={(event) => onSave({ ...settings, gamification: { ...gamification, compactMode: event.target.checked } })}
             />
             Compact mode
+          </label>
+          <label className="complete-toggle">
+            <input
+              type="checkbox"
+              checked={gamification.showDisciplineCues !== false}
+              onChange={(event) => onSave({ ...settings, gamification: { ...gamification, showDisciplineCues: event.target.checked } })}
+            />
+            Show Lock-In cues
           </label>
         </div>
         <div className="settings-actions">
