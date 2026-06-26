@@ -694,7 +694,7 @@ function App() {
       </aside>
 
       <main className="main">
-        <TopBar cycleInfo={cycleInfo} settings={data.settings} data={data} startWorkout={startWorkout} />
+        {route.page !== "dashboard" && <TopBar cycleInfo={cycleInfo} settings={data.settings} data={data} startWorkout={startWorkout} />}
         {loading ? (
           <LoadingScreen />
         ) : (
