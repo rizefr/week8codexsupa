@@ -265,7 +265,10 @@ export function numericValue(value?: string): number {
 export function repsForSet(set: SetLog, exercise?: Exercise): number {
   if (trackingTypeForExercise(exercise) === "timed") return validSecondValue(set.seconds);
   if (exercise?.unilateral) {
-    return validRepValue(set.leftReps) + validRepValue(set.rightReps);
+    const left = validRepValue(set.leftReps);
+    const right = validRepValue(set.rightReps);
+    if (left || right) return left + right;
+    return validRepValue(set.reps);
   }
   return validRepValue(set.reps);
 }
@@ -388,19 +391,35 @@ export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]
 }
 
 export function previousSetSummary(exerciseLog: ExerciseLog, exercise?: Exercise): string {
-  if (!exerciseLog.sets.length) return "";
+  if (!exerciseLog.sets.length) {
+    const cardio = exerciseLog.cardio;
+    if (!cardio?.duration) return "";
+    return [
+      `${cardio.duration} min`,
+      cardio.incline ? `incline ${cardio.incline}` : "",
+      cardio.speed ? `${cardio.speed} mph` : "",
+    ].filter(Boolean).join(" · ");
+  }
   const showLoad = shouldShowLoadInput(exercise);
-  const loadLabel = loadIsAssistance(exercise) ? "assist" : "lb";
+  const loadLabel = loadIsAssistance(exercise) ? "lb assistance" : "lb";
   return exerciseLog.sets
     .map((set) => {
-      const performance = trackingTypeForExercise(exercise) === "timed"
-        ? `${set.seconds || "-"} sec`
-        : exercise?.unilateral
-          ? `${set.leftReps || "-"}/${set.rightReps || "-"} reps`
-          : `${set.reps || "-"} reps`;
+      const performance = previousSetPerformance(set, exercise);
       return showLoad ? `S${set.setNumber}: ${set.weight || "-"} ${loadLabel} x ${performance}` : `S${set.setNumber}: ${performance}`;
     })
     .join(" · ");
+}
+
+function previousSetPerformance(set: SetLog, exercise?: Exercise): string {
+  if (trackingTypeForExercise(exercise) === "timed") return `${set.seconds || "-"} sec`;
+  if (exercise?.unilateral) {
+    const left = validRepValue(set.leftReps) ? set.leftReps : "";
+    const right = validRepValue(set.rightReps) ? set.rightReps : "";
+    if (left || right) return `L ${left || "-"} / R ${right || "-"} reps`;
+    if (validRepValue(set.reps)) return `${set.reps} reps/side`;
+    return "- reps/side";
+  }
+  return `${set.reps || "-"} reps`;
 }
 
 export function hasRecoveryWarning(logs: WorkoutLog[], week: number, _settings: ProgramSettings): boolean {
@@ -524,7 +543,12 @@ export function totalSecondsForExerciseLog(log: ExerciseLog): number {
 
 export function bestSetReps(log: ExerciseLog, exercise?: Exercise): number {
   return Math.max(0, ...log.sets.filter((set) => set.completed).map((set) => {
-    if (exercise?.unilateral) return Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps));
+    if (exercise?.unilateral) {
+      const left = validRepValue(set.leftReps);
+      const right = validRepValue(set.rightReps);
+      if (left && right) return Math.min(left, right);
+      return Math.max(left, right, validRepValue(set.reps));
+    }
     return validRepValue(set.reps);
   }));
 }

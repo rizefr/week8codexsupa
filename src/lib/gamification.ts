@@ -13,12 +13,16 @@ import {
   exerciseVolume,
   findExercise,
   isTrainingDay,
+  numericValue,
+  previousExercisePerformance,
   setInputsAreValid,
+  targetRIRForExercise,
   totalRepsForExerciseLog,
   totalSecondsForExerciseLog,
   trackingTypeForExercise,
   validLoadValue,
   validRepValue,
+  validRirValue,
   validSecondValue,
   workoutVolume,
 } from "./progress";
@@ -113,6 +117,67 @@ export interface Achievement {
   progressTarget: number;
 }
 
+export type PlayerArchetype =
+  | "V-Taper Builder"
+  | "Back Width Focus"
+  | "Clean Logger"
+  | "Recovery Discipline"
+  | "Lower Body Comeback"
+  | "Consistency Streak"
+  | "Upper Body Push";
+
+export interface PlayerStatus {
+  archetype: PlayerArchetype;
+  momentumStatus: string;
+  cycleLabel: string;
+  nextUnlock: string;
+  weeklyProgress: string;
+  reasons: string[];
+}
+
+export interface DailyQuest {
+  id: string;
+  title: string;
+  detail: string;
+  completed: boolean;
+  progressCurrent: number;
+  progressTarget: number;
+  tone: "mission" | "quality" | "recovery" | "progress";
+}
+
+export interface WeeklyChallenge {
+  id: string;
+  title: string;
+  detail: string;
+  completed: boolean;
+  progressCurrent: number;
+  progressTarget: number;
+  nextStep: string;
+}
+
+export type PRTierTitle =
+  | "Baseline Established"
+  | "Rep PR"
+  | "Volume PR"
+  | "Assistance Improvement"
+  | "Hold-Time PR"
+  | "Consistency PR";
+
+export interface BaselineRecord {
+  id: string;
+  workoutId: string;
+  date: string;
+  exerciseName: string;
+  label: string;
+}
+
+export interface AchievementPreview {
+  id: string;
+  title: string;
+  label: string;
+  progressPercent: number;
+}
+
 export interface TodayMission {
   title: string;
   subtitle: string;
@@ -136,6 +201,10 @@ export interface WorkoutRecap {
   badgesUnlocked: Achievement[];
   streakText: string;
   nextFocus: string;
+  quests: DailyQuest[];
+  weeklyChallenge: WeeklyChallenge;
+  baselines: BaselineRecord[];
+  lockInReasons: string[];
 }
 
 export interface GamificationSummary {
@@ -150,6 +219,10 @@ export interface GamificationSummary {
   achievements: Achievement[];
   recentBadges: Achievement[];
   recentPRs: PRRecord[];
+  playerStatus: PlayerStatus;
+  dailyQuests: DailyQuest[];
+  weeklyChallenge: WeeklyChallenge;
+  achievementPreviews: AchievementPreview[];
 }
 
 export const defaultGamificationSettings: GamificationSettings = {
@@ -863,24 +936,341 @@ function firstMeaningfulDate(data: AppData): string {
   ].sort()[0];
 }
 
+function currentWeekContext(data: AppData, date = todayISO()) {
+  const logs = canonicalWorkoutLogs(data.workoutLogs);
+  const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, date);
+  const cycle = getCycleInfo(startDate, date);
+  const weekLogs = logs.filter((log) => log.week === cycle.programWeek);
+  return { logs, startDate, cycle, weekLogs };
+}
+
+function safePercent(value: number, target: number): number {
+  if (target <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((value / target) * 100)));
+}
+
+function scheduledWorkoutComplete(logs: WorkoutLog[], dayKey: DayKey, week: number): boolean {
+  return logs.some((log) => log.week === week && log.dayKey === dayKey && log.status === "completed" && isTrainingDay(log.dayKey));
+}
+
+function plannedSetTargetForMuscles(groups: string[]): number {
+  return trainingDayKeys.reduce((sum, dayKey) => {
+    const workout = getWorkoutByKey(dayKey);
+    return sum + workout.exercises.reduce((exerciseSum, exercise) => {
+      const hits = exercise.muscleGroups?.some((group) => groups.includes(group)) ?? false;
+      return hits ? exerciseSum + (exercise.sets ?? 0) : exerciseSum;
+    }, 0);
+  }, 0);
+}
+
+function completedSetCountForMuscles(logs: WorkoutLog[], groups: string[]): number {
+  return logs.reduce((sum, log) => {
+    if (log.status !== "completed") return sum;
+    return sum + log.exerciseLogs.reduce((exerciseSum, exerciseLog) => {
+      const exercise = findExercise(exerciseLog.exerciseId);
+      const hits = exercise?.muscleGroups?.some((group) => groups.includes(group)) ?? false;
+      return hits ? exerciseSum + exerciseLog.sets.filter((set) => set.completed).length : exerciseSum;
+    }, 0);
+  }, 0);
+}
+
+function safeRirSetStats(logs: WorkoutLog[]) {
+  let valid = 0;
+  let targetMatched = 0;
+  let riskyTooLow = 0;
+  logs.forEach((log) => {
+    log.exerciseLogs.forEach((exerciseLog) => {
+      const exercise = findExercise(exerciseLog.exerciseId);
+      if (!exercise) return;
+      const risk = exercise.riskLevel === "higher" || /press|bench|pull-up|dip|row|squat|deadlift|rdl|split squat/i.test(exercise.name);
+      if (!risk) return;
+      const target = targetRIRForExercise(exercise, log.weekInCycle);
+      const upper = /setup/i.test(target) ? 3 : /0-1|0–1/.test(target) ? 2 : 2;
+      exerciseLog.sets.filter((set) => set.completed && validRirValue(set.rir)).forEach((set) => {
+        valid += 1;
+        const rir = numericValue(set.rir);
+        if (rir >= 0 && rir <= upper) targetMatched += 1;
+        if (rir <= 0.25) riskyTooLow += 1;
+      });
+    });
+  });
+  return { valid, targetMatched, riskyTooLow };
+}
+
+export function achievementProgressPreview(badge: Achievement): AchievementPreview {
+  const current = Math.min(badge.progressCurrent, badge.progressTarget);
+  const remaining = Math.max(0, badge.progressTarget - current);
+  const unit = /workout/i.test(badge.title) ? "workout" : /week/i.test(badge.title) ? "week" : /streak/i.test(badge.title) ? "day" : "step";
+  const label = badge.unlocked
+    ? "Unlocked"
+    : remaining === 1
+      ? `1 ${unit} away`
+      : `${current} / ${badge.progressTarget}`;
+  return {
+    id: badge.id,
+    title: badge.title,
+    label,
+    progressPercent: safePercent(current, badge.progressTarget),
+  };
+}
+
+export function classifyPRTier(pr: PRRecord): { title: PRTierTitle; label: string } {
+  if (pr.metric === "volume") return { title: "Volume PR", label: pr.label };
+  if (pr.metric === "assistance") return { title: "Assistance Improvement", label: pr.label };
+  if (pr.metric === "timed") return { title: "Hold-Time PR", label: pr.label };
+  if (pr.metric === "total-reps" || pr.metric === "reps-at-weight" || pr.metric === "best-set") {
+    return { title: "Rep PR", label: pr.label };
+  }
+  return { title: "Consistency PR", label: pr.label };
+}
+
+export function baselineRecordsForWorkout(workout: WorkoutLog, data: AppData): BaselineRecord[] {
+  return workout.exerciseLogs.flatMap((exerciseLog) => {
+    const exercise = findExercise(exerciseLog.exerciseId);
+    if (!exercise || exercise.prEligible === false) return [];
+    if (!exerciseLog.completed && !exerciseLog.sets.some((set) => set.completed)) return [];
+    if (previousExercisePerformance(data.workoutLogs, workout.date, exercise.name)) return [];
+    return [{
+      id: `baseline:${workout.id}:${exercise.id}`,
+      workoutId: workout.id,
+      date: workout.date,
+      exerciseName: exercise.name,
+      label: `${exercise.name} now has a baseline for future comparisons.`,
+    }];
+  });
+}
+
+export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[] {
+  const { startDate, cycle, logs, weekLogs } = currentWeekContext(data, date);
+  const scheduledDayKey = dayKeyForDate(date);
+  const todayLogs = logs.filter((log) => log.date === date);
+  const activeLog = todayLogs.find((log) => log.status === "draft") ?? todayLogs.find((log) => log.status === "completed");
+  const activeDayKey = activeLog?.dayKey ?? scheduledDayKey;
+  const workout = getWorkoutByKey(activeDayKey);
+  const weeklyWeightCount = data.bodyWeights.filter((entry) => getCycleInfo(startDate, entry.date).programWeek === cycle.programWeek).length;
+  const weightLoggedToday = data.bodyWeights.some((entry) => entry.date === date);
+  const weightSkippedToday = new Set(getGamificationSettings(data.settings).bodyWeightPromptSkips ?? []).has(date);
+  const quests: DailyQuest[] = [];
+
+  if (isTrainingDay(activeDayKey)) {
+    const completed = activeLog?.status === "completed";
+    quests.push({
+      id: `complete-workout:${date}:${activeDayKey}`,
+      title: `Complete ${workout.shortTitle}`,
+      detail: activeLog?.isScheduleOverride ? "Schedule override counts once for today." : "Finish the scheduled routine without extra junk volume.",
+      completed,
+      progressCurrent: completed ? 1 : 0,
+      progressTarget: 1,
+      tone: "mission",
+    });
+
+    const quality = activeLog ? loggingQualityForWorkout(activeLog) : 0;
+    quests.push({
+      id: `clean-logging:${date}:${activeDayKey}`,
+      title: "Log all working sets cleanly",
+      detail: "Weight/assistance, reps or seconds, and RIR where the movement uses it.",
+      completed: quality >= 90,
+      progressCurrent: Math.min(90, quality),
+      progressTarget: 90,
+      tone: "quality",
+    });
+
+    const rirStats = safeRirSetStats(activeLog ? [activeLog] : []);
+    const hasCardio = !!workout.cardio?.length;
+    quests.push(hasCardio ? {
+      id: `easy-cardio:${date}:${activeDayKey}`,
+      title: "Keep cardio easy",
+      detail: "Conversational pace only. No HIIT, no hard intervals.",
+      completed: !!activeLog?.exerciseLogs.some((log) => log.cardio?.completed && !HARD_CARDIO_RE.test(log.cardio?.intensityNotes ?? "")),
+      progressCurrent: activeLog?.exerciseLogs.some((log) => log.cardio?.completed) ? 1 : 0,
+      progressTarget: 1,
+      tone: "recovery",
+    } : {
+      id: `rir-discipline:${date}:${activeDayKey}`,
+      title: "Stay inside target RIR on compounds",
+      detail: "Hard sets count; sloppy failure does not.",
+      completed: rirStats.valid > 0 && safePercent(rirStats.targetMatched, rirStats.valid) >= 80,
+      progressCurrent: rirStats.valid ? safePercent(rirStats.targetMatched, rirStats.valid) : 0,
+      progressTarget: 80,
+      tone: "quality",
+    });
+  } else {
+    const restComplete = !!activeLog?.restDay?.completed;
+    quests.push({
+      id: `rest-checkin:${date}`,
+      title: "Complete recovery check-in",
+      detail: "Rest counts. The plan grows from recovery, not extra lifting.",
+      completed: restComplete,
+      progressCurrent: restComplete ? 1 : 0,
+      progressTarget: 1,
+      tone: "recovery",
+    });
+  }
+
+  if (weeklyWeightCount < 2 && !weightLoggedToday && !weightSkippedToday) {
+    quests.push({
+      id: `bodyweight:${date}`,
+      title: "Log bodyweight if useful",
+      detail: "Goal is 2-4 logs per week, not daily pressure.",
+      completed: false,
+      progressCurrent: weeklyWeightCount,
+      progressTarget: 2,
+      tone: "progress",
+    });
+  }
+
+  const currentWeekCompleted = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).length;
+  if (!quests.some((quest) => quest.tone === "progress") && currentWeekCompleted >= 1) {
+    quests.push({
+      id: `plus-one-rep:${date}`,
+      title: "Find one clean rep PR target",
+      detail: "Beat a prior session by one clean rep before adding load.",
+      completed: detectPRs({ ...data, workoutLogs: weekLogs }).some((pr) => pr.date === date && (pr.metric === "total-reps" || pr.metric === "reps-at-weight" || pr.metric === "best-set")),
+      progressCurrent: detectPRs({ ...data, workoutLogs: weekLogs }).some((pr) => pr.date === date) ? 1 : 0,
+      progressTarget: 1,
+      tone: "progress",
+    });
+  }
+
+  return quests.slice(0, 3);
+}
+
+export function buildWeeklyChallenge(data: AppData, date = todayISO()): WeeklyChallenge {
+  const { cycle, weekLogs } = currentWeekContext(data, date);
+  const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey));
+  const avgLogging = completedTraining.length
+    ? Math.round(completedTraining.reduce((sum, log) => sum + loggingQualityForWorkout(log), 0) / completedTraining.length)
+    : 0;
+  const lowerComplete = scheduledWorkoutComplete(weekLogs, "tuesday", cycle.programWeek);
+  const vTarget = plannedSetTargetForMuscles(["lats", "side-delts"]);
+  const vDone = completedSetCountForMuscles(weekLogs, ["lats", "side-delts"]);
+  const restViolations = weekLogs.filter((log) => !isTrainingDay(log.dayKey) && completedSetCount(log) > 0).length;
+  const rirStats = safeRirSetStats(weekLogs);
+
+  if (!lowerComplete && completedTraining.length > 0) {
+    return {
+      id: `lower-comeback:${cycle.programWeek}`,
+      title: "Lower Body Comeback",
+      detail: "Complete Lower + Abs so the week does not become all upper-body momentum.",
+      completed: false,
+      progressCurrent: 0,
+      progressTarget: 1,
+      nextStep: "Hit Tuesday Lower + Abs cleanly when you can.",
+    };
+  }
+  if (avgLogging > 0 && avgLogging < 90) {
+    return {
+      id: `clean-logging:${cycle.programWeek}`,
+      title: "Clean Logging Week",
+      detail: "Reach 90%+ set logging quality across completed workouts.",
+      completed: avgLogging >= 90,
+      progressCurrent: avgLogging,
+      progressTarget: 90,
+      nextStep: "Fill missing reps, load/assistance, seconds, and RIR where needed.",
+    };
+  }
+  if (vDone < vTarget * 0.7) {
+    return {
+      id: `v-taper:${cycle.programWeek}`,
+      title: "V-Taper Week",
+      detail: "Complete programmed lat and side-delt work. No extra volume needed.",
+      completed: vDone >= vTarget,
+      progressCurrent: vDone,
+      progressTarget: vTarget,
+      nextStep: "Let scheduled pull-ups, rows, and laterals do the work.",
+    };
+  }
+  if (restViolations > 0 || rirStats.riskyTooLow > 0) {
+    return {
+      id: `no-ego:${cycle.programWeek}`,
+      title: "No Ego Week",
+      detail: "Keep higher-risk movements hard but clean. Rest days stay rest days.",
+      completed: restViolations === 0 && rirStats.riskyTooLow === 0,
+      progressCurrent: Math.max(0, 2 - restViolations - rirStats.riskyTooLow),
+      progressTarget: 2,
+      nextStep: "Hold form standards before chasing load or failure.",
+    };
+  }
+  return {
+    id: `perfect-week:${cycle.programWeek}`,
+    title: "Perfect Week",
+    detail: "Finish every scheduled workout for the program week.",
+    completed: completedTraining.length >= trainingDayKeys.length,
+    progressCurrent: completedTraining.length,
+    progressTarget: trainingDayKeys.length,
+    nextStep: completedTraining.length >= trainingDayKeys.length ? "Week complete. Keep recovery clean." : "Complete the next scheduled workout.",
+  };
+}
+
+export function buildPlayerStatus(data: AppData, summary: Pick<GamificationSummary, "level" | "executionScore" | "streaks" | "achievements" | "prs">): PlayerStatus {
+  const { cycle, weekLogs } = currentWeekContext(data);
+  const challenge = buildWeeklyChallenge(data);
+  const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey));
+  const avgLogging = completedTraining.length
+    ? Math.round(completedTraining.reduce((sum, log) => sum + loggingQualityForWorkout(log), 0) / completedTraining.length)
+    : 0;
+  const vDone = completedSetCountForMuscles(weekLogs, ["lats", "side-delts"]);
+  const lowerComplete = scheduledWorkoutComplete(weekLogs, "tuesday", cycle.programWeek);
+  const archetype: PlayerArchetype =
+    !lowerComplete && completedTraining.length > 0 ? "Lower Body Comeback" :
+    vDone >= 12 ? "V-Taper Builder" :
+    challenge.title === "No Ego Week" ? "Recovery Discipline" :
+    avgLogging >= 90 ? "Clean Logger" :
+    summary.streaks.dailyCheckIn.current >= 5 ? "Consistency Streak" :
+    completedSetCountForMuscles(weekLogs, ["chest", "upper-chest", "triceps"]) >= 8 ? "Upper Body Push" :
+    "Back Width Focus";
+  const nextBadge = summary.achievements
+    .filter((badge) => !badge.unlocked)
+    .sort((a, b) => (b.progressCurrent / Math.max(1, b.progressTarget)) - (a.progressCurrent / Math.max(1, a.progressTarget)))[0];
+  const today = todayISO();
+  const todayLog = canonicalWorkoutLogs(data.workoutLogs).find((log) => log.date === today);
+  const momentumStatus = todayLog?.status === "completed"
+    ? "Workout logged today"
+    : todayLog?.status === "draft"
+      ? "Draft waiting"
+      : summary.streaks.dailyCheckIn.current >= 3
+        ? "Streak building"
+        : "Ready to start";
+  return {
+    archetype,
+    momentumStatus,
+    cycleLabel: `Cycle ${cycle.cycle} · Week ${cycle.weekInCycle} of 8`,
+    nextUnlock: nextBadge ? `${nextBadge.title}: ${achievementProgressPreview(nextBadge).label}` : `Level ${summary.level.level + 1}: ${summary.level.xpToNext} XP away`,
+    weeklyProgress: `${completedTraining.length}/${trainingDayKeys.length} workouts this week`,
+    reasons: [
+      `${summary.executionScore.overall}/100 Lock-In Score`,
+      `${avgLogging || summary.executionScore.logging}% logging quality`,
+      `${summary.prs.filter((pr) => pr.date >= addDays(today, -6)).length} PR signals this week`,
+    ],
+  };
+}
+
 export function calculateGamification(data: AppData): GamificationSummary {
   const settings = getGamificationSettings(data.settings);
   const xpEvents = buildXPEvents(data);
   const totalXP = xpEvents.reduce((sum, event) => sum + event.xp, 0);
   const prs = detectPRs(data);
   const achievements = unlockAchievements(data, settings);
+  const level = calculateLevelFromXP(totalXP);
+  const streaks = calculateStreaks(data);
+  const executionScore = calculateExecutionScore(data);
+  const summarySeed = { level, executionScore, streaks, achievements, prs };
   return {
     settings,
     xpEvents,
     totalXP,
-    level: calculateLevelFromXP(totalXP),
+    level,
     prs,
-    streaks: calculateStreaks(data),
-    executionScore: calculateExecutionScore(data),
+    streaks,
+    executionScore,
     activities: generateDailyActivity(data),
     achievements,
     recentBadges: achievements.filter((badge) => badge.unlocked).sort((a, b) => (b.unlockedAt ?? "").localeCompare(a.unlockedAt ?? "")).slice(0, 4),
     recentPRs: [...prs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5),
+    playerStatus: buildPlayerStatus(data, summarySeed),
+    dailyQuests: buildDailyQuests(data),
+    weeklyChallenge: buildWeeklyChallenge(data),
+    achievementPreviews: achievements.filter((badge) => !badge.unlocked).map(achievementProgressPreview).sort((a, b) => b.progressPercent - a.progressPercent).slice(0, 4),
   };
 }
 
@@ -963,5 +1353,9 @@ export function buildWorkoutRecap(workoutId: string, data: AppData): WorkoutReca
     badgesUnlocked,
     streakText: `${summary.streaks.workout.current} workout · ${summary.streaks.dailyCheckIn.current} daily check-in`,
     nextFocus: nextFocusCue(data, addDays(log.date, 1)),
+    quests: buildDailyQuests(data, log.date),
+    weeklyChallenge: buildWeeklyChallenge(data, log.date),
+    baselines: baselineRecordsForWorkout(log, data),
+    lockInReasons: buildPlayerStatus(data, summary).reasons,
   };
 }

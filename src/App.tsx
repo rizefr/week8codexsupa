@@ -100,9 +100,11 @@ import {
 } from "./lib/storage";
 import {
   Achievement,
+  achievementProgressPreview,
   buildTodayMission,
   buildWorkoutRecap,
   calculateGamification,
+  classifyPRTier,
   defaultGamificationSettings,
   DailyActivity,
   GamificationSummary,
@@ -932,6 +934,10 @@ function Dashboard({
   const coach = buildDashboardCoachSummary(data, gamification);
   const scoreReasons = coach.lockInReasons.slice(0, 3);
   const nextCue = buildNextBestActionCue(data, gamification);
+  const player = gamification.playerStatus;
+  const dailyQuests = gamification.dailyQuests;
+  const weeklyChallenge = gamification.weeklyChallenge;
+  const topMasteries = [...weeklyMuscleProgress].sort((a, b) => b.score - a.score).slice(0, 3);
   const handleMissionAction = () => {
     if (mission.action === "sync") onSyncNow();
     else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
@@ -1007,6 +1013,21 @@ function Dashboard({
             </section>
           )}
 
+          <section className="player-status-panel premium-card">
+            <div className="player-status-main">
+              <span className="eyebrow-accent">Player Status</span>
+              <h2>{player.archetype}</h2>
+              <p>{player.momentumStatus} · {player.cycleLabel}</p>
+              <div className="status-chip-row">
+                <span>{player.weeklyProgress}</span>
+                <span>Next unlock: {player.nextUnlock}</span>
+              </div>
+            </div>
+            <div className="player-status-reasons">
+              {player.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+            </div>
+          </section>
+
           <section className="game-grid">
             <article className="game-card level-card telemetry-card premium-glass">
               <div className="game-card-heading">
@@ -1078,6 +1099,46 @@ function Dashboard({
               <small style={{ display: "block", marginTop: "0.6rem", color: "var(--muted)", fontSize: "0.76rem" }}>
                 {gamification.streaks.dailyCheckIn.graceUsedThisWeek ? "Grace day used this week." : "One grace day remains available."}
               </small>
+            </article>
+          </section>
+
+          <section className="game-grid two objective-grid">
+            <article className="panel premium-glass quest-panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Daily Quests</p>
+                  <h3>Today's objectives</h3>
+                </div>
+              </div>
+              <div className="quest-list">
+                {dailyQuests.map((quest) => (
+                  <div key={quest.id} className={classNames("quest-item", quest.completed && "complete", quest.tone)}>
+                    <span>{quest.completed ? "Complete" : `${Math.min(quest.progressCurrent, quest.progressTarget)}/${quest.progressTarget}`}</span>
+                    <strong>{quest.title}</strong>
+                    <p>{quest.detail}</p>
+                    <div className="quest-meter"><i style={{ width: `${Math.min(100, (quest.progressCurrent / Math.max(1, quest.progressTarget)) * 100)}%` }} /></div>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="panel premium-glass weekly-challenge-panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Weekly Challenge</p>
+                  <h3>{weeklyChallenge.title}</h3>
+                </div>
+                <span className={classNames("completion-state", weeklyChallenge.completed && "complete")}>
+                  {weeklyChallenge.completed ? "Cleared" : `${weeklyChallenge.progressCurrent}/${weeklyChallenge.progressTarget}`}
+                </span>
+              </div>
+              <p>{weeklyChallenge.detail}</p>
+              <div className="quest-meter large"><i style={{ width: `${Math.min(100, (weeklyChallenge.progressCurrent / Math.max(1, weeklyChallenge.progressTarget)) * 100)}%` }} /></div>
+              <strong className="next-focus-line">{weeklyChallenge.nextStep}</strong>
+              {!!topMasteries.length && (
+                <div className="mastery-strip">
+                  {topMasteries.map((item) => <span key={item.group}>{item.label}: {item.mastery}</span>)}
+                </div>
+              )}
             </article>
           </section>
 
@@ -1765,6 +1826,7 @@ function RecapPage({
   const trainedMuscles = musclesForWorkout(recap.log);
   const recapMuscleProgress = calculateMuscleProgress(data, gamification.prs, recap.log.date, recap.log.date);
   const coach = buildWorkoutCoachSummary(recap.log, data, gamification);
+  const completedQuests = recap.quests.filter((quest) => quest.completed);
   return (
     <div className="content-stack">
       <section className="recap-hero premium-card pulse-glow">
@@ -1844,6 +1906,41 @@ function RecapPage({
         <MuscleMapPanel progress={recapMuscleProgress} title="Workout muscle impact" rangeLabel="This session" compact />
       )}
 
+      <section className="panel premium-glass result-screen-panel">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow-accent" style={{ color: "var(--blue)" }}>Result Screen</span>
+            <h2>Objectives cleared</h2>
+          </div>
+        </div>
+        <div className="result-grid">
+          <article>
+            <span>Daily quests</span>
+            <strong>{completedQuests.length}/{recap.quests.length} complete</strong>
+            <div className="quest-list compact">
+              {recap.quests.map((quest) => (
+                <div key={quest.id} className={classNames("quest-item", quest.completed && "complete", quest.tone)}>
+                  <span>{quest.completed ? "Done" : `${quest.progressCurrent}/${quest.progressTarget}`}</span>
+                  <strong>{quest.title}</strong>
+                </div>
+              ))}
+            </div>
+          </article>
+          <article>
+            <span>Weekly challenge</span>
+            <strong>{recap.weeklyChallenge.title}</strong>
+            <p>{recap.weeklyChallenge.progressCurrent}/{recap.weeklyChallenge.progressTarget} · {recap.weeklyChallenge.nextStep}</p>
+            <div className="quest-meter"><i style={{ width: `${Math.min(100, (recap.weeklyChallenge.progressCurrent / Math.max(1, recap.weeklyChallenge.progressTarget)) * 100)}%` }} /></div>
+          </article>
+          <article>
+            <span>Lock-In reasons</span>
+            <div className="status-chip-row">
+              {recap.lockInReasons.map((reason) => <span key={reason}>{reason}</span>)}
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section className="panel coach-recap-panel premium-glass">
         <div className="section-heading">
           <div>
@@ -1883,7 +1980,18 @@ function RecapPage({
               <h3>{recap.prs.length ? `${recap.prs.length} new signals` : "No new PRs"}</h3>
             </div>
           </div>
-          <MiniList empty="Good execution still counts. PRs show when performance beats prior valid logs." items={recap.prs.slice(0, 5).map((pr) => `${pr.exerciseName}: ${pr.label}`)} />
+          <MiniList
+            empty="Good execution still counts. Baselines and PRs separate cleanly."
+            items={recap.prs.slice(0, 5).map((pr) => {
+              const tier = classifyPRTier(pr);
+              return `${tier.title} · ${pr.exerciseName}: ${tier.label}`;
+            })}
+          />
+          {!!recap.baselines.length && (
+            <div className="baseline-list">
+              {recap.baselines.slice(0, 4).map((baseline) => <span key={baseline.id}>Baseline Established · {baseline.exerciseName}</span>)}
+            </div>
+          )}
         </article>
         <article className="panel premium-glass">
           <div className="section-heading">
@@ -1967,6 +2075,12 @@ function LogExerciseCard({
   };
 
   if (cardio) {
+    const previousCardio = allLogs
+      .filter((item) => item.status === "completed" && item.date < log.date)
+      .flatMap((item) => item.exerciseLogs.map((entry) => ({ workout: item, exerciseLog: entry })))
+      .filter((item) => item.exerciseLog.exerciseId === cardio.id && !!item.exerciseLog.cardio?.duration)
+      .sort((a, b) => a.workout.date.localeCompare(b.workout.date))
+      .at(-1);
     const updateCardio = (patch: Partial<NonNullable<ExerciseLog["cardio"]>>) => {
       const nextCardio: NonNullable<ExerciseLog["cardio"]> = {
         ...exerciseLog.cardio,
@@ -1988,6 +2102,12 @@ function LogExerciseCard({
           </span>
         </div>
         {cardio.notes && <div className="guidance-card">{cardio.notes}</div>}
+        {previousCardio && (
+          <div className="previous-box">
+            <strong>Previous:</strong> {formatDate(previousCardio.workout.date)}
+            <span>{previousSetSummary(previousCardio.exerciseLog)}</span>
+          </div>
+        )}
         <div className="input-grid">
           <NumberField
             label="Duration"
@@ -2318,7 +2438,7 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
           <h2>{title}</h2>
         </div>
         <div className="muscle-legend" aria-label="Muscle stimulus intensity legend">
-          <span><i className="intensity-0" />Inactive</span><span><i className="intensity-1" />Light</span><span><i className="intensity-2" />Good</span><span><i className="intensity-3" />High stimulus</span><span><i className="intensity-4" />Standout</span>
+          <span><i className="intensity-0" />Needs attention</span><span><i className="intensity-1" />Light</span><span><i className="intensity-2" />On track</span><span><i className="intensity-3" />High stimulus</span><span><i className="intensity-4" />Standout</span>
         </div>
       </div>
       <div className="muscle-map-layout">
@@ -2336,7 +2456,7 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
           </div>}
           {selected && (
             <div className="muscle-detail-card" aria-live="polite">
-              <p className="eyebrow">{selected.trend}</p>
+              <p className="eyebrow">{selected.mastery}</p>
               <h3>{selected.label}</h3>
               <div className="muscle-detail-metrics">
                 <span><strong>{selected.sets}</strong> completed sets</span>
@@ -2349,7 +2469,7 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
             </div>
           )}
           {!selected && <div className="muscle-detail-card empty-muscle-detail"><p className="eyebrow">Ready for input</p><h3>No recent muscle stimulus</h3><span>Complete a workout and this map will show where the scheduled work landed.</span></div>}
-          {compact && !!activeGroups.length && <div className="muscle-impact-list">{activeGroups.slice(0, 5).map((item) => <button key={item.group} onClick={() => setSelectedGroup(item.group)}><span>{item.label}</span><strong>{item.trend}</strong></button>)}</div>}
+          {compact && !!activeGroups.length && <div className="muscle-impact-list">{activeGroups.slice(0, 5).map((item) => <button key={item.group} onClick={() => setSelectedGroup(item.group)}><span>{item.label}</span><strong>{item.mastery}</strong></button>)}</div>}
         </div>
       </div>
       <p className="muscle-method-note">Primary-target sets count 1.0 stimulus point; supporting targets count 0.5. Valid PRs add 2 points. Colors summarize workload, not injury or recovery status.</p>
@@ -2366,13 +2486,14 @@ function PRTimeline({ gamification }: { gamification: GamificationSummary }) {
         const exercise = allExercises.find((item) => item.name === pr.exerciseName);
         const muscle = exercise?.muscleGroups?.[0];
         const xp = gamification.xpEvents.find((event) => event.key === pr.id)?.xp;
+        const tier = classifyPRTier(pr);
         return (
           <article key={pr.id} className="pr-timeline-item">
             <div className="pr-timeline-marker"><Dumbbell size={16} /></div>
             <div>
-              <div className="pr-timeline-meta"><time>{formatDate(pr.date)}</time>{muscle && <span>{muscleLabels[muscle]}</span>}{xp && <strong>+{xp} XP</strong>}<span className="pr-sparkle">PR</span></div>
+              <div className="pr-timeline-meta"><time>{formatDate(pr.date)}</time>{muscle && <span>{muscleLabels[muscle]}</span>}{xp && <strong>+{xp} XP</strong>}<span className="pr-sparkle">{tier.title}</span></div>
               <h4>{pr.exerciseName}</h4>
-              <p>{pr.label}</p>
+              <p>{tier.label}</p>
             </div>
           </article>
         );
@@ -2475,8 +2596,8 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
             </div>
             <div className="focus-summary-grid">
               <div><span>Workouts</span><strong>{weekCompleted}/{trainingDayKeys.length}</strong></div>
-              <div><span>Most trained</span><strong>{muscleFocus.leading?.label ?? "No data"}</strong></div>
-              <div><span>Lightest area</span><strong>{muscleFocus.lightest?.label ?? "No data"}</strong></div>
+              <div><span>Most trained</span><strong>{muscleFocus.leading ? `${muscleFocus.leading.label}: ${muscleFocus.leading.mastery}` : "No data"}</strong></div>
+              <div><span>Lightest area</span><strong>{muscleFocus.lightest ? `${muscleFocus.lightest.label}: ${muscleFocus.lightest.mastery}` : "No data"}</strong></div>
               <div><span>Consistency</span><strong>{gamification.executionScore.consistency}/100</strong></div>
             </div>
             <p style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--muted)" }}>
@@ -2776,14 +2897,17 @@ function BadgeGrid({ achievements }: { achievements: Achievement[] }) {
       <div>
         <p className="eyebrow">Next badges</p>
         <div className="badge-grid">
-          {locked.slice(0, 8).map((badge) => (
-            <article key={badge.id} className="badge-card">
-              <strong>{badge.title}</strong>
-              <span>{badge.description}</span>
-              <div className="xp-bar"><i style={{ width: `${Math.min(100, (badge.progressCurrent / Math.max(1, badge.progressTarget)) * 100)}%` }} /></div>
-              <small>{badge.progressCurrent}/{badge.progressTarget}</small>
-            </article>
-          ))}
+          {locked.slice(0, 8).map((badge) => {
+            const preview = achievementProgressPreview(badge);
+            return (
+              <article key={badge.id} className="badge-card">
+                <strong>{badge.title}</strong>
+                <span>{badge.description}</span>
+                <div className="xp-bar"><i style={{ width: `${preview.progressPercent}%` }} /></div>
+                <small>{preview.label}</small>
+              </article>
+            );
+          })}
         </div>
       </div>
     </div>

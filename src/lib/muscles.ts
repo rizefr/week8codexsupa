@@ -66,8 +66,17 @@ export type MuscleProgress = {
   exercises: string[];
   recentPRs: string[];
   trend: "No recent work" | "Light" | "On track" | "High" | "Standout";
+  mastery: "Needs Attention" | "Light" | "On Track" | "High Stimulus" | "Standout";
   nextTarget: string;
 };
+
+export function muscleMasteryState(progress: Pick<MuscleProgress, "intensity">): MuscleProgress["mastery"] {
+  if (progress.intensity === 0) return "Needs Attention";
+  if (progress.intensity === 1) return "Light";
+  if (progress.intensity === 2) return "On Track";
+  if (progress.intensity === 3) return "High Stimulus";
+  return "Standout";
+}
 
 function canonicalCompletedLogs(logs: WorkoutLog[], fromDate: string, toDate: string): WorkoutLog[] {
   return canonicalWorkoutLogs(logs).filter(
@@ -127,6 +136,7 @@ export function calculateMuscleProgress(
       exercises,
       recentPRs: record.prs.slice(-3).reverse(),
       trend,
+      mastery: muscleMasteryState({ intensity }),
       nextTarget: exercises.length
         ? `Next target: add one clean rep or match quality on ${exercises[0]} before changing load.`
         : `Next target: complete the next scheduled workout that trains ${muscleLabels[group].toLowerCase()}.`,
