@@ -40,6 +40,17 @@ Recommended:
 
 Netlify will give you a free public URL like `https://something.netlify.app`.
 
+### Manual production deploy safety
+
+If deploying from the Netlify CLI instead of a Git-triggered Netlify build, build with the Netlify production context so `dist/config.js` receives the Supabase runtime config:
+
+```bash
+npx netlify build --context production
+npx netlify deploy --prod --dir=dist --no-build
+```
+
+Do not use `npm run build && npx netlify deploy --prod --dir=dist --no-build` unless `SUPABASE_URL` and `SUPABASE_ANON_KEY` are already set in your local shell. That path can upload a working app with an empty `config.js`, which makes Cloud Sync appear unconfigured even though Netlify has the variables.
+
 ## 4. Use On Your Phone
 
 1. Open the Netlify URL on your phone.
