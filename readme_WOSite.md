@@ -10,9 +10,9 @@ This file is the consolidated operating reference for the current workout site. 
 
 - Production host: Netlify.
 - Cloud database/auth: Supabase.
-- Last known source commit before this documentation pass: `b1838257077c511355e63e4c0d8c438118994012`.
+- This documentation was introduced after source release commit `a8e30d2aed2c2e815ef2d7c4cba8a8b335a4109f`.
 - Production deploys must be verified against the live URL after every change because prior manual deploys have accidentally uploaded an empty Supabase config.
-- The final report for each deployment should record the exact GitHub commit and Netlify deploy ID used for that release.
+- The final report for each deployment should record the exact GitHub commit and Netlify deploy ID used for that release because direct Netlify CLI deploys are verified by deploy ID and live URL readback.
 
 ## App Overview
 
