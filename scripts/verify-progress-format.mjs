@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { workoutDays } from "../dist/src/data/routine.js";
 import {
+  completedSetCount,
   exerciseSessions,
   previousExercisePerformance,
   previousSetSummary,
+  workoutVolume,
 } from "../dist/src/lib/progress.js";
+import { detectPRs, loggingQualityForWorkout } from "../dist/src/lib/gamification.js";
 
 const exercises = Object.values(workoutDays).flatMap((day) => day.exercises);
 const byName = (name) => {
@@ -121,5 +124,26 @@ assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", byName("Ass
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "One-Arm DB Row"), undefined, "One-arm rows should not match chest-supported rows.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "RDL")?.exercise?.name, "DB Romanian Deadlift", "Configured RDL alias should match.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "DB Skullcrusher")?.exercise?.name, "Lying DB Triceps Extension", "Configured skullcrusher alias should match.");
+
+const baseWarmupSafetyLog = logFor("2026-06-10", "Low-Incline DB Press", [
+  { id: "s1", setNumber: 1, target: "6-10", weight: "35", reps: "8", rir: "2", completed: true },
+  { id: "s2", setNumber: 2, target: "6-10", weight: "35", reps: "8", rir: "2", completed: true },
+]);
+const warmupDecoratedLog = {
+  ...baseWarmupSafetyLog,
+  warmupLog: {
+    completedDrills: {
+      "monday-easy-treadmill-walk": true,
+      "monday-low-incline-press-ramp-up": true,
+    },
+    notes: "Used 15 lb ramp-up DBs for easy reps.",
+    updatedAt: "2026-06-10T12:00:00.000Z",
+  },
+};
+assert.equal(workoutVolume(warmupDecoratedLog), workoutVolume(baseWarmupSafetyLog), "Warm-up metadata must not affect working-set volume.");
+assert.equal(completedSetCount(warmupDecoratedLog), completedSetCount(baseWarmupSafetyLog), "Warm-up metadata must not affect completed working-set count.");
+assert.equal(loggingQualityForWorkout(warmupDecoratedLog), loggingQualityForWorkout(baseWarmupSafetyLog), "Warm-up metadata must not affect logging quality.");
+assert.equal(previousExercisePerformance([warmupDecoratedLog], "2026-06-11", "Easy Treadmill Walk"), undefined, "Warm-up drills must not become previous exercise sessions.");
+assert.deepEqual(detectPRs({ settings: { startDate: "2026-06-01" }, workoutLogs: [warmupDecoratedLog], bodyWeights: [] }), [], "Warm-up metadata must not create PR records.");
 
 console.log("Progress formatting regression checks passed.");

@@ -101,6 +101,29 @@ export interface RestOption {
   work: string;
 }
 
+export type WarmupDrillType = "general" | "pre-exercise" | "posture";
+export type WarmupDrillCompletion = true;
+
+export interface WarmupDrill {
+  id: string;
+  dayKey?: DayKey;
+  order: number;
+  name: string;
+  prescription: string;
+  when: string;
+  why: string;
+  type: WarmupDrillType;
+  exerciseId?: string;
+  optional?: boolean;
+  effortTarget?: string;
+}
+
+export interface WarmupLog {
+  completedDrills?: Record<string, WarmupDrillCompletion>;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface WorkoutDay {
   key: DayKey;
   dayName: string;
@@ -204,6 +227,7 @@ export interface WorkoutLog {
     intensityNotes?: string;
     completed: boolean;
   };
+  warmupLog?: WarmupLog;
   exerciseLogs: ExerciseLog[];
 }
 

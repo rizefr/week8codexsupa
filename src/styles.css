@@ -3330,3 +3330,255 @@ tr:last-child td {
     overflow-wrap: anywhere;
   }
 }
+
+.warmup-mission-callout,
+.warmup-quick-panel,
+.warmup-recap-strip {
+  border: 1px solid rgba(245, 184, 75, 0.28);
+  background: linear-gradient(135deg, rgba(245, 184, 75, 0.11), rgba(115, 167, 255, 0.06));
+  border-radius: 14px;
+}
+
+.warmup-mission-callout {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  padding: 0.85rem;
+}
+
+.warmup-mission-callout div,
+.warmup-quick-panel > div:first-child,
+.warmup-recap-strip > div:first-child {
+  min-width: 0;
+}
+
+.warmup-mission-callout strong,
+.warmup-mission-callout span {
+  display: block;
+}
+
+.warmup-mission-callout span,
+.warmup-quick-panel p,
+.warmup-recap-strip p {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.warmup-quick-panel,
+.warmup-recap-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.warmup-progress-block {
+  display: grid;
+  gap: 0.25rem;
+  justify-items: end;
+  min-width: 132px;
+}
+
+.warmup-progress-block strong {
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.warmup-progress-block span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.warmup-panel .section-heading p,
+.warmup-quick-panel p,
+.warmup-recap-strip p {
+  margin-bottom: 0;
+}
+
+.warmup-checklist {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.warmup-checklist-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.warmup-checklist-heading span,
+.recap-hero .eyebrow-accent {
+  color: var(--muted);
+}
+
+.warmup-checklist-heading strong {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.warmup-checklist-heading small {
+  color: var(--muted);
+  text-align: right;
+  max-width: 220px;
+}
+
+.warmup-drill-list,
+.warmup-routine-body,
+.warmup-reference-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.warmup-drill,
+.warmup-reference-list article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.warmup-reference-list article {
+  grid-template-columns: 1fr;
+}
+
+.warmup-drill.done {
+  border-color: rgba(61, 214, 163, 0.28);
+  background: rgba(61, 214, 163, 0.07);
+}
+
+.warmup-drill.optional {
+  border-style: dashed;
+}
+
+.warmup-drill strong,
+.warmup-reference-list strong {
+  display: block;
+  line-height: 1.25;
+}
+
+.warmup-drill span,
+.warmup-reference-list span,
+.warmup-reference-list p,
+.warmup-drill p {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.15rem 0 0;
+}
+
+.warmup-done-button {
+  min-width: 92px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.warmup-done-button.done {
+  color: var(--green);
+  border-color: rgba(61, 214, 163, 0.35);
+  background: rgba(61, 214, 163, 0.1);
+}
+
+.pre-exercise-warmup-card {
+  margin: 0.85rem 0;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 184, 75, 0.22);
+  background: rgba(245, 184, 75, 0.055);
+}
+
+.warmup-checklist.compact .warmup-drill {
+  grid-template-columns: auto 1fr;
+  padding: 0.65rem;
+}
+
+.warmup-checklist.compact .warmup-checklist-heading small,
+.warmup-checklist.compact .warmup-drill p {
+  display: none;
+}
+
+.warmup-routine-panel {
+  border: 1px solid rgba(245, 184, 75, 0.22);
+  border-radius: 12px;
+  background: rgba(245, 184, 75, 0.045);
+  padding: 0.75rem 0.9rem;
+  margin: 0.75rem 0;
+}
+
+.warmup-routine-panel summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.warmup-routine-body {
+  padding-top: 0.65rem;
+}
+
+.warmup-reference-list h4 {
+  margin: 0.25rem 0;
+}
+
+.warmup-warning-panel .muted-copy {
+  margin-top: -0.25rem;
+}
+
+.warmup-avoid-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.warmup-avoid-grid span {
+  border: 1px solid rgba(255, 122, 122, 0.25);
+  background: rgba(255, 122, 122, 0.07);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.warmup-notes-field {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 680px) {
+  .warmup-mission-callout,
+  .warmup-quick-panel,
+  .warmup-recap-strip,
+  .warmup-checklist-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .warmup-progress-block,
+  .warmup-checklist-heading small {
+    justify-items: start;
+    text-align: left;
+    max-width: none;
+  }
+
+  .warmup-drill {
+    grid-template-columns: 1fr;
+  }
+
+  .warmup-done-button {
+    width: 100%;
+  }
+}

@@ -271,3 +271,14 @@ Browser/mobile QA checklist:
 - Add route-backed filters for Progress/History so mobile views can be shared or restored.
 - Add optional richer replacement logging without building a full exercise database.
 - Add an AI coach only after local deterministic feedback remains stable and privacy/cost are explicitly handled.
+# Warm-Up System
+
+Eli's Cycle Tracker includes a day-specific warm-up layer that is separate from working sets. Warm-ups appear in Dashboard/Today as a short availability callout, in the Logger as a `Pre-Workout Warm-Up` checklist, before matching exercises as `Do Before This Exercise` ramp-up cards, and in Routine as expandable reference panels.
+
+Warm-up completion is stored as optional `WorkoutLog.warmupLog` JSON. Older workout logs without warm-up data remain valid. Warm-up drills and ramp-up sets are never written into `exerciseLogs`, so they do not count toward working-set volume, PRs, Trends by Lift, previous-performance comparisons, exercise result states, or working-set logging quality.
+
+General warm-ups use simple Done controls only. Pre-exercise ramp-ups also use Done controls and are shown immediately above the matching exercise. Notes can be stored in the warm-up notes field for stiffness, ramp-up loads, or joint status, but those notes are informational and do not affect progression calculations.
+
+Rest days show optional posture work instead of lifting warm-ups. The posture routine is intended for rest days or after lifting, not before heavy lifting.
+
+The Routine page also lists movements to avoid before lifting: long static stretches, long dead hangs, high-rep push-ups, band arm circuits, aggressive shoulder dislocates, and weighted lateral raise warm-up sets. These are intentionally kept out of the pre-lifting warm-up because they can add fatigue, reduce performance, or irritate joints.

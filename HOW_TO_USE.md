@@ -186,3 +186,11 @@ If you see **Sync issue**:
 ## Best Habit
 
 After each workout, wait until you see **Saved to cloud** before closing the tab. If you cannot get cloud sync at that moment, **Saved locally** is still enough to keep the data on that phone until you sync later.
+# Warm-Up Flow
+
+1. Open Today or Dashboard and look for `Warm-Up Available · 5-8 min`.
+2. Start or continue the workout, then use the `Pre-Workout Warm-Up` checklist at the top of the Logger.
+3. When an exercise has a ramp-up, use the `Do Before This Exercise` card above that exercise.
+4. Keep warm-ups easy: RPE 2-4, no RIR, no hard sets.
+5. Warm-ups are saved separately from working sets. They do not count toward PRs, Trends by Lift, volume, or progression decisions.
+6. On rest days, use the optional posture routine only if it helps recovery.

@@ -1,5 +1,6 @@
 import { AppData, BodyWeightLog, Exercise, ExerciseLog, MuscleGroup, ReplacementOption, SetLog, WorkoutLog } from "../types";
 import { trainingDayKeys } from "../data/routine";
+import { warmupCompletionSummary } from "../data/warmups";
 import { getCycleInfo, todayISO } from "./date";
 import {
   bestAssistance,
@@ -368,6 +369,8 @@ export function buildWorkoutCoachSummary(log: WorkoutLog, data: AppData, gamific
   const prs = recentPRsForWorkout(log, gamification.prs);
   const quality = loggingQualityForWorkout(log);
   const sets = completedSetCount(log);
+  const warmup = warmupCompletionSummary(log);
+  const noteText = `${log.notes ?? ""} ${log.exerciseLogs.map((exerciseLog) => `${exerciseLog.notes ?? ""} ${exerciseLog.sets.map((set) => set.notes ?? "").join(" ")}`).join(" ")}`;
   const exerciseNotes = clampList(log.exerciseLogs.map((exerciseLog) => buildExerciseFeedback(exerciseLog, log, data)).filter((item): item is ExerciseCoachFeedback => Boolean(item)), 5);
   const bodyParts = log.exerciseLogs
     .flatMap((exerciseLog) => findExercise(exerciseLog.exerciseId)?.muscleGroups ?? [])
@@ -376,11 +379,17 @@ export function buildWorkoutCoachSummary(log: WorkoutLog, data: AppData, gamific
   const wins: CoachInsight[] = [];
   if (prs.length) wins.push({ title: `${prs.length} real PR${prs.length === 1 ? "" : "s"}`, detail: prs[0].label, tone: "win" });
   if (quality >= 95) wins.push({ title: "Logging quality locked", detail: `${quality}% of planned set data was complete.`, tone: "win" });
+  if (warmup.total && warmup.completed) wins.push({ title: "Warm-up logged", detail: `${warmup.completed}/${warmup.total} prep drills tracked separately from work sets.`, tone: "win" });
   if (sets) wins.push({ title: "Planned work banked", detail: `${sets} completed sets counted toward the routine.`, tone: "win" });
   if (!wins.length) wins.push({ title: "Workout saved", detail: "The log is preserved and ready for comparison next time.", tone: "focus" });
 
   const firstFocus = exerciseNotes.flatMap((note) => note.insights).find((insight) => insight.tone === "hold" || insight.tone === "recovery" || insight.tone === "focus");
-  const nextFocus = firstFocus ?? {
+  const warmupReminder = /lower back|back pain|back hurt|grip|hinge/i.test(noteText)
+    ? { title: "Warm-up reminder", detail: "Next time, do the hinge prep and light RDL ramp-up before work sets.", tone: "recovery" as const }
+    : /shoulder|pinch|irritation|unstable/i.test(noteText)
+      ? { title: "Warm-up reminder", detail: "Next time, use wall slides, external rotation, and scap prep before pressing or dips.", tone: "recovery" as const }
+      : null;
+  const nextFocus = firstFocus ?? warmupReminder ?? {
     title: "Next time",
     detail: "Repeat the plan and add clean reps before changing load.",
     tone: "focus" as const,

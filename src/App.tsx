@@ -23,6 +23,14 @@ import {
   Weight,
 } from "./components/icons";
 import { progressionSections, ruleSections, tableSections, trainingDayKeys, weeklySchedule, workoutDays } from "./data/routine";
+import {
+  doNotDoBeforeLifting,
+  isWarmupComplete,
+  postureWarmups,
+  preExerciseWarmupsForExercise,
+  warmupCompletionSummary,
+  warmupsForDay,
+} from "./data/warmups";
 import { getCloudStatus, sendMagicLink, signOutCloud, syncCloudNow } from "./lib/cloud";
 import {
   AppData,
@@ -34,6 +42,7 @@ import {
   MuscleGroup,
   ProgramSettings,
   SetLog,
+  WarmupDrill,
   WorkoutLog,
 } from "./types";
 import { addDays, dayKeyForDate, formatDate, getCycleInfo, todayISO } from "./lib/date";
@@ -173,6 +182,31 @@ function navigate(page: Page, id?: string) {
 
 function classNames(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(" ");
+}
+
+function updateWarmupDrill(log: WorkoutLog, drillId: string, completed: boolean): WorkoutLog {
+  const completedDrills = { ...(log.warmupLog?.completedDrills ?? {}) };
+  if (completed) completedDrills[drillId] = true;
+  else delete completedDrills[drillId];
+  return {
+    ...log,
+    warmupLog: {
+      ...log.warmupLog,
+      completedDrills,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function updateWarmupNotes(log: WorkoutLog, notes: string): WorkoutLog {
+  return {
+    ...log,
+    warmupLog: {
+      ...log.warmupLog,
+      notes,
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 function MiniChart({
@@ -940,6 +974,9 @@ function Dashboard({
   const dailyQuests = gamification.dailyQuests;
   const weeklyChallenge = gamification.weeklyChallenge;
   const topMasteries = [...weeklyMuscleProgress].sort((a, b) => b.score - a.score).slice(0, 3);
+  const warmupSummary = todayLog ? warmupCompletionSummary(todayLog) : warmupCompletionSummary({ dayKey });
+  const warmupLabel = isTrainingDay(dayKey) ? "Warm-Up Available · 5-8 min" : "Rest-Day Posture Routine";
+  const warmupActionLabel = todayLog ? "Open warm-up" : isTrainingDay(dayKey) ? "Start warm-up" : "View posture routine";
   const handleMissionAction = () => {
     if (mission.action === "sync") onSyncNow();
     else if (mission.action === "continue-workout" || mission.action === "start-workout") startWorkout(today);
@@ -972,6 +1009,17 @@ function Dashboard({
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+              {warmupSummary.hasWarmups && (
+                <div className="warmup-mission-callout">
+                  <div>
+                    <strong>{warmupLabel}</strong>
+                    <span>{warmupSummary.completed}/{warmupSummary.total} done · RPE 2-4, not training</span>
+                  </div>
+                  <button type="button" className="mini-action" onClick={() => todayLog ? navigate("logger", todayLog.id) : startWorkout(today)}>
+                    {warmupActionLabel}
+                  </button>
                 </div>
               )}
             </div>
@@ -1320,6 +1368,7 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
   const dayKey = todayLog?.dayKey ?? scheduledDayKey;
   const workout = workoutDays[dayKey];
   const log = todayLog;
+  const warmupSummary = log ? warmupCompletionSummary(log) : warmupCompletionSummary({ dayKey });
   return (
     <div className="content-stack">
       <section className="panel today-panel">
@@ -1338,6 +1387,11 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
           {log?.status === "draft" ? "Continue Workout" : log?.status === "completed" ? "Open Completed Log" : "Start Workout"}
         </button>
       </section>
+      <WarmupQuickPanel
+        title={isTrainingDay(dayKey) ? "Warm-Up Available · 5-8 min" : "Optional posture routine"}
+        summary={warmupSummary}
+        onOpen={() => (log ? navigate("logger", log.id) : startWorkout(today, dayKey))}
+      />
       {!log && (
         <section className="panel override-panel">
           <div className="section-heading">
@@ -1368,6 +1422,111 @@ function ScheduleOverrideChooser({ onChoose, compact = false }: { onChoose: (day
       </div>
       <p>This changes today only. Tomorrow follows the normal calendar schedule.</p>
     </details>
+  );
+}
+
+function WarmupQuickPanel({
+  title,
+  summary,
+  onOpen,
+}: {
+  title: string;
+  summary: ReturnType<typeof warmupCompletionSummary>;
+  onOpen: () => void;
+}) {
+  if (!summary.hasWarmups) return null;
+  return (
+    <section className="panel warmup-quick-panel">
+      <div>
+        <p className="eyebrow">Warm-up</p>
+        <h3>{title}</h3>
+        <p>RPE 2-4. Prime positions and joints without fatigue.</p>
+      </div>
+      <div className="warmup-progress-block">
+        <strong>{summary.completed}/{summary.total}</strong>
+        <span>drills done</span>
+        <button className="secondary-action" type="button" onClick={onOpen}>Open warm-up</button>
+      </div>
+    </section>
+  );
+}
+
+function WarmupChecklist({
+  title,
+  drills,
+  warmupLog,
+  onToggle,
+  compact = false,
+}: {
+  title: string;
+  drills: WarmupDrill[];
+  warmupLog?: WorkoutLog["warmupLog"];
+  onToggle: (drillId: string, completed: boolean) => void;
+  compact?: boolean;
+}) {
+  if (!drills.length) return null;
+  const completed = drills.filter((drill) => isWarmupComplete(warmupLog, drill.id)).length;
+  return (
+    <div className={classNames("warmup-checklist", compact && "compact")}>
+      <div className="warmup-checklist-heading">
+        <div>
+          <span>{title}</span>
+          <strong>{completed}/{drills.length} done</strong>
+        </div>
+        <small>Easy effort only · no RIR · no working-set credit</small>
+      </div>
+      <div className="warmup-drill-list">
+        {drills.map((drill) => {
+          const done = isWarmupComplete(warmupLog, drill.id);
+          return (
+            <article key={drill.id} className={classNames("warmup-drill", done && "done", drill.optional && "optional")}>
+              <button type="button" className={classNames("warmup-done-button", done && "done")} onClick={() => onToggle(drill.id, !done)}>
+                {done ? <CheckCircle2 size={17} /> : <Circle size={17} />}
+                <span>{done ? "Done" : "Mark done"}</span>
+              </button>
+              <div>
+                <strong>{drill.name}</strong>
+                <span>{drill.prescription}{drill.optional ? " · optional" : ""}</span>
+                {!compact && <p>{drill.when} · {drill.why}</p>}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WarmupRoutinePanel({ dayKey }: { dayKey: DayKey }) {
+  const general = warmupsForDay(dayKey, "general");
+  const preExercise = warmupsForDay(dayKey, "pre-exercise");
+  const restDay = !isTrainingDay(dayKey);
+  const posture = restDay ? postureWarmups() : [];
+  if (!general.length && !preExercise.length && !posture.length) return null;
+  return (
+    <details className="warmup-routine-panel">
+      <summary>{restDay ? "Rest-day posture / walk options" : "Warm-Up · 5-8 min"}</summary>
+      <div className="warmup-routine-body">
+        {!!general.length && <WarmupReferenceList title="Pre-workout warm-up" drills={general} />}
+        {!!preExercise.length && <WarmupReferenceList title="Do before matching exercises" drills={preExercise} />}
+        {!!posture.length && <WarmupReferenceList title="Optional posture routine" drills={posture} />}
+      </div>
+    </details>
+  );
+}
+
+function WarmupReferenceList({ title, drills }: { title: string; drills: WarmupDrill[] }) {
+  return (
+    <div className="warmup-reference-list">
+      <h4>{title}</h4>
+      {drills.map((drill) => (
+        <article key={drill.id}>
+          <strong>{drill.name}</strong>
+          <span>{drill.prescription}{drill.optional ? " · optional" : ""}</span>
+          <p>{drill.when} · {drill.why}</p>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -1416,6 +1575,19 @@ function RoutinePage() {
       {visibleDays.map((item) => (
         <WorkoutDayDetail key={item.key} dayKey={item.key} compact={false} />
       ))}
+
+      <section className="panel warmup-warning-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Warm-up guardrails</p>
+            <h3>Do not do before lifting</h3>
+          </div>
+        </div>
+        <p className="muted-copy">These can reduce performance, add fatigue, or irritate joints before lifting. Save longer mobility work for rest days or after training.</p>
+        <div className="warmup-avoid-grid">
+          {doNotDoBeforeLifting.map((item) => <span key={item}>{item}</span>)}
+        </div>
+      </section>
 
       <section className="panel">
         <div className="section-heading">
@@ -1541,6 +1713,7 @@ function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolea
       </div>
       {workout.benchSetup && <div className="guidance-card">{workout.benchSetup}</div>}
       {workout.intent && <div className="guidance-card">{workout.intent}</div>}
+      <WarmupRoutinePanel dayKey={dayKey} />
       {workout.restOptions && (
         <div className="rest-grid">
           {workout.restOptions.map((option) => (
@@ -1646,6 +1819,9 @@ function LoggerPage({
   const loggingQuality = loggingQualityForWorkout(log);
   const prCount = gamification.prs.filter((pr) => pr.workoutId === log.id).length;
   const possibleXP = isTrainingDay(log.dayKey) ? (workout.cardio ? 185 : 170) : 40;
+  const primaryWarmups = isTrainingDay(log.dayKey) ? warmupsForDay(log.dayKey, "general") : postureWarmups();
+  const warmupTitle = isTrainingDay(log.dayKey) ? "Pre-Workout Warm-Up" : "Optional Posture Routine";
+  const toggleWarmup = (drillId: string, completed: boolean) => updateLog((current) => updateWarmupDrill(current, drillId, completed));
   const completeWorkout = () => {
     const completed = {
       ...log,
@@ -1703,6 +1879,27 @@ function LoggerPage({
           <span>Logging quality: {loggingQuality}%</span>
           {!!prCount && <span>New PR signals: {prCount}</span>}
         </div>
+      )}
+
+      {!!primaryWarmups.length && (
+        <section className="panel warmup-panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Warm-up</p>
+              <h3>{warmupTitle}</h3>
+              <p>Easy RPE 2-4. These do not count toward working sets, PRs, or volume.</p>
+            </div>
+          </div>
+          <WarmupChecklist title={warmupTitle} drills={primaryWarmups} warmupLog={log.warmupLog} onToggle={toggleWarmup} />
+          <label className="field-label warmup-notes-field">
+            Warm-up notes
+            <input
+              value={log.warmupLog?.notes ?? ""}
+              onChange={(event) => updateLog((current) => updateWarmupNotes(current, event.target.value))}
+              placeholder="Stiff spots, ramp-up loads, joint status..."
+            />
+          </label>
+        </section>
       )}
 
       {workout.benchSetup && <div className="guidance-card">{workout.benchSetup}</div>}
@@ -1767,6 +1964,8 @@ function LoggerPage({
           log={log}
           exerciseLog={exerciseLog}
           allLogs={data.workoutLogs}
+          warmupLog={log.warmupLog}
+          onWarmupToggle={toggleWarmup}
           onChange={(nextExerciseLog) =>
             updateLog((current) => ({
               ...current,
@@ -1829,6 +2028,7 @@ function RecapPage({
   const recapMuscleProgress = calculateMuscleProgress(data, gamification.prs, recap.log.date, recap.log.date);
   const coach = buildWorkoutCoachSummary(recap.log, data, gamification);
   const completedQuests = recap.quests.filter((quest) => quest.completed);
+  const warmupSummary = warmupCompletionSummary(recap.log);
   return (
     <div className="content-stack">
       <section className="recap-hero premium-card pulse-glow">
@@ -1854,6 +2054,17 @@ function RecapPage({
           </div>
         </div>
       </section>
+
+      {warmupSummary.hasWarmups && (
+        <section className="panel warmup-recap-strip">
+          <div>
+            <p className="eyebrow">Warm-up</p>
+            <h3>{warmupSummary.completed}/{warmupSummary.total} drills completed</h3>
+            <p>Tracked separately. Warm-ups do not affect PRs, volume, Trends by Lift, or working-set quality.</p>
+          </div>
+          <span className={classNames("completion-state", warmupSummary.completed > 0 && "complete")}>{warmupSummary.percent}%</span>
+        </section>
+      )}
 
       <section className="stats-grid compact">
         <article className="panel premium-glass">
@@ -2063,11 +2274,15 @@ function LogExerciseCard({
   log,
   exerciseLog,
   allLogs,
+  warmupLog,
+  onWarmupToggle,
   onChange,
 }: {
   log: WorkoutLog;
   exerciseLog: ExerciseLog;
   allLogs: WorkoutLog[];
+  warmupLog?: WorkoutLog["warmupLog"];
+  onWarmupToggle: (drillId: string, completed: boolean) => void;
   onChange: (log: ExerciseLog) => void;
 }) {
   const exercise = findExercise(exerciseLog.exerciseId);
@@ -2163,6 +2378,7 @@ function LogExerciseCard({
   const effortLabel = effortLabelForExercise(exercise);
   const displayExerciseName = exerciseLog.performedExerciseName ?? exercise.name;
   const aliasLabel = exerciseAliasLabel(exercise);
+  const exerciseWarmups = preExerciseWarmupsForExercise(log.dayKey, exercise.id);
   const applyReplacement = (replacementName: string, reason: string) => {
     onChange({
       ...exerciseLog,
@@ -2208,6 +2424,17 @@ function LogExerciseCard({
       </div>
       <div className="guidance-card">{exercise.notes}</div>
       {exercise.logHint && <div className="guidance-card">{exercise.logHint}</div>}
+      {!!exerciseWarmups.length && (
+        <div className="pre-exercise-warmup-card">
+          <WarmupChecklist
+            title="Do Before This Exercise"
+            drills={exerciseWarmups}
+            warmupLog={warmupLog}
+            onToggle={onWarmupToggle}
+            compact
+          />
+        </div>
+      )}
       <ExerciseHelpDisclosure exercise={exercise} onUseReplacement={applyReplacement} />
       {exerciseLog.performedExerciseName && (
         <button type="button" className="mini-action" onClick={clearReplacement}>

@@ -1,5 +1,6 @@
 import { AppData, BodyWeightLog, DayKey, Exercise, ExerciseLog, GamificationSettings, ProgramSettings, SetLog, WorkoutLog } from "../types";
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
+import { warmupCompletionSummary } from "../data/warmups";
 import { addDays, dayKeyForDate, daysSince, getCycleInfo, todayISO } from "./date";
 import {
   bestAssistance,
@@ -1200,6 +1201,19 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
       progressTarget: 1,
       tone: "mission",
     });
+
+    const warmup = warmupCompletionSummary({ dayKey: activeDayKey, warmupLog: activeLog?.warmupLog });
+    if (warmup.generalTotal) {
+      quests.push({
+        id: `warmup:${date}:${activeDayKey}`,
+        title: "Complete warm-up before first work set",
+        detail: "Easy RPE 2-4 only. Warm-ups do not count as working sets.",
+        completed: warmup.generalCompleted >= warmup.generalTotal,
+        progressCurrent: warmup.generalCompleted,
+        progressTarget: warmup.generalTotal,
+        tone: "recovery",
+      });
+    }
 
     const quality = activeLog ? loggingQualityForWorkout(activeLog) : 0;
     quests.push({
