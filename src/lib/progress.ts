@@ -43,9 +43,31 @@ export function canonicalExerciseKey(exerciseOrName?: Exercise | string): string
   return match?.canonicalExerciseId ?? normalized;
 }
 
+export function comparisonExerciseKey(exerciseOrName?: Exercise | string): string {
+  if (!exerciseOrName) return "unknown";
+  if (typeof exerciseOrName !== "string") {
+    return exerciseOrName.comparisonExerciseId ?? normalizeExerciseName(exerciseOrName.name);
+  }
+  const normalized = normalizeExerciseName(exerciseOrName);
+  const match = allExercises.find((exercise) => {
+    const strictNames = [
+      exercise.name,
+      exercise.commonName,
+      ...(exercise.comparisonAliases ?? []),
+    ].filter(Boolean) as string[];
+    return strictNames.some((name) => normalizeExerciseName(name) === normalized);
+  });
+  return match?.comparisonExerciseId ?? (match ? normalizeExerciseName(match.name) : normalized);
+}
+
 export function exerciseMatches(exercise: Exercise | undefined, query: Exercise | string): boolean {
   if (!exercise) return false;
   return canonicalExerciseKey(exercise) === canonicalExerciseKey(query);
+}
+
+export function exerciseComparisonMatches(exercise: Exercise | undefined, query: Exercise | string): boolean {
+  if (!exercise) return false;
+  return comparisonExerciseKey(exercise) === comparisonExerciseKey(query);
 }
 
 export function exerciseDisplayName(exercise: Exercise | undefined, exerciseLog?: ExerciseLog): string {
@@ -376,7 +398,7 @@ export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]
     exerciseLogs: log.exerciseLogs.map((exerciseLog) => {
       const exercise = findExercise(exerciseLog.exerciseId);
       if (!exercise) return exerciseLog;
-      const previous = previousExercisePerformance(logs, log.date, exercise.name);
+      const previous = previousExercisePerformance(logs, log.date, exercise);
       if (!previous) return exerciseLog;
       if (!shouldShowLoadInput(exercise)) return exerciseLog;
       return {
@@ -496,19 +518,24 @@ export function progressionAdvice(log: ExerciseLog): string {
   return trackingType === "assistance-reps" ? "Keep assistance the same and add clean reps next time." : "Keep the same load/variation and add clean reps next time.";
 }
 
-export function exerciseSessions(logs: WorkoutLog[], exerciseName: string) {
+export function exerciseSessions(
+  logs: WorkoutLog[],
+  exerciseQuery: Exercise | string,
+  options: { matchMode?: "strict" | "family" } = {},
+) {
+  const matches = options.matchMode === "family" ? exerciseMatches : exerciseComparisonMatches;
   return logs
     .filter((log) => log.status === "completed")
     .flatMap((log) =>
       log.exerciseLogs
         .map((exerciseLog) => ({ workout: log, exerciseLog, exercise: findExercise(exerciseLog.exerciseId) }))
-        .filter((item) => exerciseMatches(item.exercise, exerciseName)),
+        .filter((item) => matches(item.exercise, exerciseQuery)),
     )
     .sort((a, b) => a.workout.date.localeCompare(b.workout.date));
 }
 
-export function previousExercisePerformance(logs: WorkoutLog[], currentDate: string, exerciseName: string) {
-  return exerciseSessions(logs, exerciseName)
+export function previousExercisePerformance(logs: WorkoutLog[], currentDate: string, exerciseQuery: Exercise | string) {
+  return exerciseSessions(logs, exerciseQuery)
     .filter((item) => item.workout.date < currentDate)
     .at(-1);
 }

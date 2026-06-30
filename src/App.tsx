@@ -42,6 +42,7 @@ import {
   autoCompletedSet,
   bodyWeightChange,
   canonicalExerciseKey,
+  comparisonExerciseKey,
   cardioInputsAreValid,
   completedExerciseCount,
   completedProgramWorkouts,
@@ -104,6 +105,7 @@ import {
   buildTodayMission,
   buildWorkoutRecap,
   calculateGamification,
+  classifyExerciseResult,
   classifyPRTier,
   defaultGamificationSettings,
   DailyActivity,
@@ -734,7 +736,7 @@ function App() {
             )}
             {route.page === "progress" && <ProgressPage data={data} gamification={gamification} gamificationEnabled={gamificationEnabled} />}
             {route.page === "weight" && <WeightPage data={data} onSave={persistWeight} />}
-            {route.page === "history" && <HistoryPage data={data} startWorkout={startWorkout} />}
+            {route.page === "history" && <HistoryPage data={data} gamification={gamification} startWorkout={startWorkout} />}
             {route.page === "settings" && (
               <SettingsPage
                 settings={data.settings}
@@ -1939,6 +1941,17 @@ function RecapPage({
             </div>
           </article>
         </div>
+        {!!recap.exerciseResults.length && (
+          <div className="exercise-result-grid">
+            {recap.exerciseResults.slice(0, 6).map((result) => (
+              <article key={result.exerciseLogId} className={classNames("exercise-result-chip", result.state)}>
+                <span>{result.label}</span>
+                <strong>{result.exerciseName}</strong>
+                <p>{result.detail}</p>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="panel coach-recap-panel premium-glass">
@@ -2212,6 +2225,12 @@ function LogExerciseCard({
               Copy previous {loadIsAssistance(exercise) ? "assistance" : "weights"}
             </button>
           )}
+        </div>
+      )}
+      {!previous && (
+        <div className="previous-box muted-previous">
+          <strong>No confirmed previous session</strong>
+          <span>This avoids comparing against a different programmed movement.</span>
         </div>
       )}
       <div className={classNames("set-table", !showLoad && "no-load", !showRir && "no-rir", exercise.unilateral && "unilateral", trackingType === "timed" && "timed")}>
@@ -2530,7 +2549,10 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
     return entryWeek >= Math.max(1, cycleInfo.programWeek - 7);
   });
   const sessions = exerciseSessions(filteredLogs, selectedExercise);
-  const selectedExerciseMeta = sessions[0]?.exercise ?? allExercises.find((exercise) => canonicalExerciseKey(exercise) === canonicalExerciseKey(selectedExercise));
+  const selectedExerciseMeta = sessions[0]?.exercise ?? allExercises.find((exercise) => comparisonExerciseKey(exercise) === comparisonExerciseKey(selectedExercise));
+  const latestExerciseResult = sessions.at(-1)
+    ? classifyExerciseResult(sessions.at(-1)!.workout, sessions.at(-1)!.exerciseLog, data, gamification.prs)
+    : null;
   const trendLabels = trendMetricLabels(selectedExerciseMeta);
   const selectedTrackingType = trackingTypeForExercise(selectedExerciseMeta);
   const primaryPoints = sessions.map((session) => progressMetricValue(session.exerciseLog, session.exercise));
@@ -2666,6 +2688,13 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
               <StatCard icon={BarChart3} label={trendLabels.best} value={bestLabel} detail={best ? formatDate(best.workout.date) : "Log this exercise first."} />
               <StatCard icon={Activity} label="Last vs previous" value={compareLastTwoExerciseSessions(data.workoutLogs, selectedExercise)} detail="Uses tracking-aware reps, seconds, assistance, or volume." />
             </div>
+            {latestExerciseResult && (
+              <div className={classNames("exercise-result-chip", latestExerciseResult.state, "wide")}>
+                <span>Latest result</span>
+                <strong>{latestExerciseResult.label} · {latestExerciseResult.exerciseName}</strong>
+                <p>{latestExerciseResult.detail}</p>
+              </div>
+            )}
             <div className="chart-grid">
               <ChartPanel title={trendLabels.primary} values={primaryPoints} stroke="#f5b84b" />
               <ChartPanel title={trendLabels.secondary} values={secondaryPoints} />
@@ -3025,7 +3054,7 @@ function WeightPage({ data, onSave }: { data: AppData; onSave: (log: BodyWeightL
   );
 }
 
-function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (date?: string, performedDayKey?: DayKey) => void }) {
+function HistoryPage({ data, gamification, startWorkout }: { data: AppData; gamification: GamificationSummary; startWorkout: (date?: string, performedDayKey?: DayKey) => void }) {
   const [filter, setFilter] = useState("");
   const [dayFilter, setDayFilter] = useState<"all" | DayKey>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "completed">("all");
@@ -3100,6 +3129,17 @@ function HistoryPage({ data, startWorkout }: { data: AppData; startWorkout: (dat
                         .filter((item) => item.performedExerciseName)
                         .map((item) => `${item.performedExerciseName} for ${exerciseNameForId(item.exerciseId)}`)
                         .join(" · ")}
+                    </div>
+                  )}
+                  {log.status === "completed" && (
+                    <div className="history-result-strip">
+                      {log.exerciseLogs
+                        .filter((item) => !!findExercise(item.exerciseId))
+                        .slice(0, 4)
+                        .map((exerciseLog) => {
+                          const result = classifyExerciseResult(log, exerciseLog, data, gamification.prs);
+                          return <span key={result.exerciseLogId} className={classNames("result-dot", result.state)}>{result.label}</span>;
+                        })}
                     </div>
                   )}
                 </div>

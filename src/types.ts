@@ -53,6 +53,8 @@ export interface Exercise {
   id: string;
   name: string;
   canonicalExerciseId?: string;
+  comparisonExerciseId?: string;
+  comparisonAliases?: string[];
   aliases?: string[];
   commonName?: string;
   kind: ExerciseKind;

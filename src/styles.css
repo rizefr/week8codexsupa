@@ -23,6 +23,115 @@
   -webkit-font-smoothing: antialiased;
 }
 
+.muted-previous {
+  border-style: dashed;
+  opacity: 0.86;
+}
+
+.exercise-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+}
+
+.exercise-result-chip,
+.history-result-strip .result-dot {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+}
+
+.exercise-result-chip {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border-radius: 14px;
+}
+
+.exercise-result-chip.wide {
+  margin-top: 0.7rem;
+}
+
+.exercise-result-chip span {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.exercise-result-chip strong,
+.exercise-result-chip p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.exercise-result-chip strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.exercise-result-chip p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.exercise-result-chip.baseline,
+.history-result-strip .baseline {
+  border-color: rgba(115, 167, 255, 0.38);
+  background: rgba(115, 167, 255, 0.1);
+  color: #a9c6ff;
+}
+
+.exercise-result-chip.improved,
+.history-result-strip .improved {
+  border-color: rgba(61, 214, 163, 0.38);
+  background: rgba(61, 214, 163, 0.1);
+  color: var(--green);
+}
+
+.exercise-result-chip.regressed,
+.history-result-strip .regressed {
+  border-color: rgba(255, 101, 101, 0.38);
+  background: rgba(255, 101, 101, 0.1);
+  color: #ff8b8b;
+}
+
+.exercise-result-chip.pr,
+.history-result-strip .pr {
+  border-color: rgba(176, 124, 255, 0.45);
+  background: rgba(176, 124, 255, 0.12);
+  color: #c8adff;
+}
+
+.exercise-result-chip.major-pr,
+.history-result-strip .major-pr {
+  border-color: rgba(215, 164, 255, 0.62);
+  background: linear-gradient(135deg, rgba(176, 124, 255, 0.18), rgba(61, 214, 163, 0.1));
+  box-shadow: 0 0 24px rgba(176, 124, 255, 0.12);
+  color: #e1c7ff;
+}
+
+.history-result-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.history-result-strip .result-dot {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.24rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 * {
   box-sizing: border-box;
 }

@@ -5,16 +5,17 @@ import {
   bestAssistance,
   bestSetReps,
   bestTimedSet,
+  comparisonExerciseKey,
   completedExerciseCount,
   completedSetCount,
   effectiveProgramStartDate,
-  canonicalExerciseKey,
-  exerciseMatches,
+  exerciseComparisonMatches,
   exerciseVolume,
   findExercise,
   isTrainingDay,
   numericValue,
   previousExercisePerformance,
+  progressMetricValue,
   setInputsAreValid,
   targetRIRForExercise,
   totalRepsForExerciseLog,
@@ -124,7 +125,8 @@ export type PlayerArchetype =
   | "Recovery Discipline"
   | "Lower Body Comeback"
   | "Consistency Streak"
-  | "Upper Body Push";
+  | "Upper Body Push"
+  | "No Ego Week";
 
 export interface PlayerStatus {
   archetype: PlayerArchetype;
@@ -161,7 +163,18 @@ export type PRTierTitle =
   | "Volume PR"
   | "Assistance Improvement"
   | "Hold-Time PR"
-  | "Consistency PR";
+  | "Consistency PR"
+  | "Major PR";
+
+export type ExerciseResultState = "baseline" | "neutral" | "improved" | "regressed" | "pr" | "major-pr";
+
+export interface ExerciseResultRecord {
+  exerciseLogId: string;
+  exerciseName: string;
+  state: ExerciseResultState;
+  label: string;
+  detail: string;
+}
 
 export interface BaselineRecord {
   id: string;
@@ -205,6 +218,7 @@ export interface WorkoutRecap {
   weeklyChallenge: WeeklyChallenge;
   baselines: BaselineRecord[];
   lockInReasons: string[];
+  exerciseResults: ExerciseResultRecord[];
 }
 
 export interface GamificationSummary {
@@ -405,7 +419,7 @@ export function detectPRs(data: AppData): PRRecord[] {
         const exercise = findExercise(exerciseLog.exerciseId);
         if (!exercise || exercise.prEligible === false) return;
         const name = exercise.name;
-        const normalized = canonicalExerciseKey(exercise);
+        const normalized = comparisonExerciseKey(exercise);
         const completedSets = exerciseLog.sets.filter((set) => set.completed);
         if (!completedSets.length) return;
 
@@ -431,7 +445,12 @@ export function detectPRs(data: AppData): PRRecord[] {
 
           completedSets.forEach((set) => {
             const load = validLoadValue(set.weight);
-            const reps = exercise.unilateral ? Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps)) : validRepValue(set.reps);
+            const reps = exercise.unilateral
+              ? Math.max(
+                  validRepValue(set.leftReps) && validRepValue(set.rightReps) ? Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps)) : 0,
+                  validRepValue(set.reps),
+                )
+              : validRepValue(set.reps);
             if (!load || !reps) return;
             const key = `${normalized}:${load}`;
             recordIfBetter(key, reps, bestRepsAtWeight, (previous) => ({
@@ -475,7 +494,12 @@ export function detectPRs(data: AppData): PRRecord[] {
         if (trackingType === "assistance-reps") {
           completedSets.forEach((set) => {
             const assistance = validLoadValue(set.weight);
-            const reps = exercise.unilateral ? Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps)) : validRepValue(set.reps);
+            const reps = exercise.unilateral
+              ? Math.max(
+                  validRepValue(set.leftReps) && validRepValue(set.rightReps) ? Math.min(validRepValue(set.leftReps), validRepValue(set.rightReps)) : 0,
+                  validRepValue(set.reps),
+                )
+              : validRepValue(set.reps);
             if (!assistance || !reps) return;
             const key = `${normalized}:${assistance}`;
             recordIfBetter(key, reps, bestAssistedRepsAtAssistance, (previous) => ({
@@ -1015,6 +1039,18 @@ export function achievementProgressPreview(badge: Achievement): AchievementPrevi
 }
 
 export function classifyPRTier(pr: PRRecord): { title: PRTierTitle; label: string } {
+  if (pr.previous && pr.previous > 0) {
+    const positiveGain = (pr.value - pr.previous) / pr.previous;
+    const assistanceGain = /less assistance/i.test(pr.label) ? (pr.previous - pr.value) / pr.previous : positiveGain;
+    if (
+      (pr.metric === "volume" && positiveGain >= 0.18) ||
+      (pr.metric === "timed" && positiveGain >= 0.2) ||
+      ((pr.metric === "total-reps" || pr.metric === "reps-at-weight" || pr.metric === "best-set") && positiveGain >= 0.2) ||
+      (pr.metric === "assistance" && assistanceGain >= 0.12)
+    ) {
+      return { title: "Major PR", label: pr.label };
+    }
+  }
   if (pr.metric === "volume") return { title: "Volume PR", label: pr.label };
   if (pr.metric === "assistance") return { title: "Assistance Improvement", label: pr.label };
   if (pr.metric === "timed") return { title: "Hold-Time PR", label: pr.label };
@@ -1024,12 +1060,113 @@ export function classifyPRTier(pr: PRRecord): { title: PRTierTitle; label: strin
   return { title: "Consistency PR", label: pr.label };
 }
 
+function prMatchesExercise(pr: PRRecord, exercise: Exercise): boolean {
+  return comparisonExerciseKey(pr.exerciseName) === comparisonExerciseKey(exercise);
+}
+
+export function classifyExerciseResult(
+  workout: WorkoutLog,
+  exerciseLog: ExerciseLog,
+  data: AppData,
+  prs: PRRecord[] = detectPRs(data),
+): ExerciseResultRecord {
+  const exercise = findExercise(exerciseLog.exerciseId);
+  const exerciseName = exercise?.name ?? "Workout item";
+  if (!exercise) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "neutral",
+      label: "Logged",
+      detail: "No routine metadata was found for this item.",
+    };
+  }
+  const matchingPRs = prs.filter((pr) => pr.workoutId === workout.id && prMatchesExercise(pr, exercise));
+  if (matchingPRs.some((pr) => classifyPRTier(pr).title === "Major PR")) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "major-pr",
+      label: "Major PR",
+      detail: classifyPRTier(matchingPRs[0]).label,
+    };
+  }
+  if (matchingPRs.length) {
+    const tier = classifyPRTier(matchingPRs[0]);
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "pr",
+      label: tier.title,
+      detail: tier.label,
+    };
+  }
+
+  const previous = previousExercisePerformance(data.workoutLogs, workout.date, exercise);
+  if (!previous) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "baseline",
+      label: "Baseline",
+      detail: "First confirmed session. Future repeats will compare against this.",
+    };
+  }
+
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "assistance-reps") {
+    const currentReps = totalRepsForExerciseLog(exerciseLog, exercise);
+    const previousReps = totalRepsForExerciseLog(previous.exerciseLog, exercise);
+    const currentAssist = bestAssistance(exerciseLog);
+    const previousAssist = bestAssistance(previous.exerciseLog);
+    if (currentAssist > 0 && previousAssist > 0 && currentAssist < previousAssist && currentReps >= previousReps) {
+      return { exerciseLogId: exerciseLog.id, exerciseName, state: "improved", label: "Improved", detail: "Less assistance with reps maintained." };
+    }
+    if (currentAssist === previousAssist && currentReps >= previousReps + 2) {
+      return { exerciseLogId: exerciseLog.id, exerciseName, state: "improved", label: "Improved", detail: `+${currentReps - previousReps} reps at the same assistance.` };
+    }
+    if (currentReps <= previousReps - 3 && currentAssist >= previousAssist) {
+      return { exerciseLogId: exerciseLog.id, exerciseName, state: "regressed", label: "Regressed", detail: "Reps fell while assistance did not improve." };
+    }
+    return { exerciseLogId: exerciseLog.id, exerciseName, state: "neutral", label: "Held steady", detail: "Assistance and reps stayed within the same range." };
+  }
+
+  const currentMetric = progressMetricValue(exerciseLog, exercise);
+  const previousMetric = progressMetricValue(previous.exerciseLog, exercise);
+  const tolerance = trackingType === "timed" ? 5 : trackingType === "weighted-reps" ? Math.max(25, previousMetric * 0.04) : 2;
+  if (currentMetric > previousMetric + tolerance) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "improved",
+      label: "Improved",
+      detail: trackingType === "timed" ? "Total hold time increased." : "Confirmed same-exercise performance improved.",
+    };
+  }
+  if (currentMetric < previousMetric - tolerance) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "regressed",
+      label: "Regressed",
+      detail: trackingType === "timed" ? "Total hold time dropped meaningfully." : "Performance dropped enough to hold steady next time.",
+    };
+  }
+  return {
+    exerciseLogId: exerciseLog.id,
+    exerciseName,
+    state: "neutral",
+    label: "Held steady",
+    detail: "About the same as the last confirmed session.",
+  };
+}
+
 export function baselineRecordsForWorkout(workout: WorkoutLog, data: AppData): BaselineRecord[] {
   return workout.exerciseLogs.flatMap((exerciseLog) => {
     const exercise = findExercise(exerciseLog.exerciseId);
     if (!exercise || exercise.prEligible === false) return [];
     if (!exerciseLog.completed && !exerciseLog.sets.some((set) => set.completed)) return [];
-    if (previousExercisePerformance(data.workoutLogs, workout.date, exercise.name)) return [];
+    if (previousExercisePerformance(data.workoutLogs, workout.date, exercise)) return [];
     return [{
       id: `baseline:${workout.id}:${exercise.id}`,
       workoutId: workout.id,
@@ -1121,12 +1258,16 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
 
   const currentWeekCompleted = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).length;
   if (!quests.some((quest) => quest.tone === "progress") && currentWeekCompleted >= 1) {
+    const comparableExercise = workout.exercises.find((exercise) =>
+      !!previousExercisePerformance(data.workoutLogs, date, exercise),
+    );
+    const todayPRs = detectPRs({ ...data, workoutLogs: weekLogs }).filter((pr) => pr.date === date);
     quests.push({
       id: `plus-one-rep:${date}`,
-      title: "Find one clean rep PR target",
-      detail: "Beat a prior session by one clean rep before adding load.",
-      completed: detectPRs({ ...data, workoutLogs: weekLogs }).some((pr) => pr.date === date && (pr.metric === "total-reps" || pr.metric === "reps-at-weight" || pr.metric === "best-set")),
-      progressCurrent: detectPRs({ ...data, workoutLogs: weekLogs }).some((pr) => pr.date === date) ? 1 : 0,
+      title: comparableExercise ? `Beat ${comparableExercise.name} by +1 clean rep` : "Set a clean comparison baseline",
+      detail: comparableExercise ? "Use the same movement only. Add reps before load." : "First confirmed sessions establish future targets; they are not fake PRs.",
+      completed: todayPRs.some((pr) => pr.metric === "total-reps" || pr.metric === "reps-at-weight" || pr.metric === "best-set"),
+      progressCurrent: todayPRs.length ? 1 : 0,
       progressTarget: 1,
       tone: "progress",
     });
@@ -1211,10 +1352,11 @@ export function buildPlayerStatus(data: AppData, summary: Pick<GamificationSumma
     : 0;
   const vDone = completedSetCountForMuscles(weekLogs, ["lats", "side-delts"]);
   const lowerComplete = scheduledWorkoutComplete(weekLogs, "tuesday", cycle.programWeek);
+  const recentWin = summary.prs.filter((pr) => pr.date >= addDays(todayISO(), -6)).at(-1);
   const archetype: PlayerArchetype =
     !lowerComplete && completedTraining.length > 0 ? "Lower Body Comeback" :
     vDone >= 12 ? "V-Taper Builder" :
-    challenge.title === "No Ego Week" ? "Recovery Discipline" :
+    challenge.title === "No Ego Week" ? "No Ego Week" :
     avgLogging >= 90 ? "Clean Logger" :
     summary.streaks.dailyCheckIn.current >= 5 ? "Consistency Streak" :
     completedSetCountForMuscles(weekLogs, ["chest", "upper-chest", "triceps"]) >= 8 ? "Upper Body Push" :
@@ -1240,7 +1382,7 @@ export function buildPlayerStatus(data: AppData, summary: Pick<GamificationSumma
     reasons: [
       `${summary.executionScore.overall}/100 Lock-In Score`,
       `${avgLogging || summary.executionScore.logging}% logging quality`,
-      `${summary.prs.filter((pr) => pr.date >= addDays(today, -6)).length} PR signals this week`,
+      recentWin ? `Best recent win: ${recentWin.exerciseName}` : `${summary.prs.filter((pr) => pr.date >= addDays(today, -6)).length} PR signals this week`,
     ],
   };
 }
@@ -1319,7 +1461,7 @@ function nextFocusCue(data: AppData, date: string, overrideDayKey?: DayKey): str
   const prior = canonicalWorkoutLogs(data.workoutLogs)
     .filter((log) => log.date < date && log.status === "completed")
     .flatMap((log) => log.exerciseLogs.map((exerciseLog) => ({ log, exerciseLog, exercise: findExercise(exerciseLog.exerciseId) })))
-    .filter((item) => exerciseMatches(item.exercise, firstExercise))
+    .filter((item) => exerciseComparisonMatches(item.exercise, firstExercise))
     .at(-1);
   if (prior) return `Next target: add 1 clean rep on ${prior.exercise?.name} before increasing weight.`;
   return workout.intent ?? `Focus: ${workout.subtitle}.`;
@@ -1357,5 +1499,8 @@ export function buildWorkoutRecap(workoutId: string, data: AppData): WorkoutReca
     weeklyChallenge: buildWeeklyChallenge(data, log.date),
     baselines: baselineRecordsForWorkout(log, data),
     lockInReasons: buildPlayerStatus(data, summary).reasons,
+    exerciseResults: log.exerciseLogs
+      .filter((exerciseLog) => !!findExercise(exerciseLog.exerciseId))
+      .map((exerciseLog) => classifyExerciseResult(log, exerciseLog, data, summary.prs)),
   };
 }

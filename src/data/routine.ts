@@ -70,6 +70,7 @@ const exerciseMeta = {
   },
   dbRomanianDeadlift: {
     canonicalExerciseId: "db-romanian-deadlift",
+    comparisonAliases: ["romanian deadlift", "rdl", "dumbbell rdl", "db rdl"],
     aliases: ["romanian deadlift", "rdl", "dumbbell rdl", "db rdl"],
     commonName: "RDL",
     movementPattern: "hip hinge",
@@ -133,6 +134,7 @@ const exerciseMeta = {
   },
   dbTricepsExtension: {
     canonicalExerciseId: "lying-db-triceps-extension",
+    comparisonAliases: ["db skullcrusher", "dumbbell skullcrusher", "skullcrusher", "lying dumbbell triceps extension"],
     aliases: ["db skullcrusher", "dumbbell skullcrusher", "skullcrusher", "lying dumbbell triceps extension"],
     commonName: "DB Skullcrusher",
     movementPattern: "elbow extension",
