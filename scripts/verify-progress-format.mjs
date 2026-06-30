@@ -108,6 +108,7 @@ const matchingLogs = [
 
 assert.equal(exerciseSessions(matchingLogs, "DB Lateral Raise").length, 2, "Exact same exercise name should match across days.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "DB Lateral Raise")?.exercise?.name, "DB Lateral Raise");
+assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", byName("DB Lateral Raise"))?.exercise?.name, "DB Lateral Raise");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "DB Lateral Raise Mechanical Set")?.exercise?.name, "DB Lateral Raise Mechanical Set");
 assert.notEqual(
   previousExercisePerformance(matchingLogs, "2026-06-09", "DB Lateral Raise")?.exercise?.name,
@@ -116,6 +117,7 @@ assert.notEqual(
 );
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "DB Squeeze Press"), undefined, "Push-up should not match DB squeeze press.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "Assisted Pull-Up")?.exercise?.name, undefined, "Heavy pull-up should not match technique/pump pull-up.");
+assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", byName("Assisted Pull-Up"))?.exercise?.name, undefined, "Object-based heavy pull-up lookup should not match technique/pump pull-up.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "One-Arm DB Row"), undefined, "One-arm rows should not match chest-supported rows.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "RDL")?.exercise?.name, "DB Romanian Deadlift", "Configured RDL alias should match.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "DB Skullcrusher")?.exercise?.name, "Lying DB Triceps Extension", "Configured skullcrusher alias should match.");

@@ -234,7 +234,7 @@ function topRangeMessage(sets: SetLog[], exercise: Exercise): CoachInsight | nul
 }
 
 function comparisonMessage(current: ExerciseLog, workout: WorkoutLog, data: AppData, exercise: Exercise): CoachInsight | null {
-  const previous = previousExercisePerformance(data.workoutLogs, workout.date, exercise.name);
+  const previous = previousExercisePerformance(data.workoutLogs, workout.date, exercise);
   if (!previous) {
     return {
       title: "Baseline logged",

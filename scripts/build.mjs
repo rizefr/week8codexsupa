@@ -42,41 +42,40 @@ function addJsExtensions(code) {
 
 async function copyFile(source, destination) {
   await fs.mkdir(path.dirname(destination), { recursive: true });
-  await fs.copyFile(source, destination);
+  const contents = await fs.readFile(source);
+  await fs.writeFile(destination, contents);
 }
 
 async function buildSource() {
   const files = await walk(srcDir);
-  await Promise.all(
-    files.map(async (file) => {
-      const relative = path.relative(srcDir, file);
-      const extension = path.extname(file);
-      if ([".css", ".png", ".svg", ".jpg", ".jpeg", ".webp"].includes(extension)) {
-        await copyFile(file, path.join(distSrcDir, relative));
-        return;
-      }
-      if (extension !== ".ts" && extension !== ".tsx") return;
-      const source = await fs.readFile(file, "utf8");
-      const output = ts.transpileModule(source, {
-        compilerOptions,
-        fileName: file,
-        reportDiagnostics: true,
+  for (const file of files) {
+    const relative = path.relative(srcDir, file);
+    const extension = path.extname(file);
+    if ([".css", ".png", ".svg", ".jpg", ".jpeg", ".webp"].includes(extension)) {
+      await copyFile(file, path.join(distSrcDir, relative));
+      continue;
+    }
+    if (extension !== ".ts" && extension !== ".tsx") continue;
+    const source = await fs.readFile(file, "utf8");
+    const output = ts.transpileModule(source, {
+      compilerOptions,
+      fileName: file,
+      reportDiagnostics: true,
+    });
+    const diagnostics = output.diagnostics ?? [];
+    const errors = diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+    if (errors.length) {
+      const message = ts.formatDiagnosticsWithColorAndContext(errors, {
+        getCanonicalFileName: (value) => value,
+        getCurrentDirectory: () => root,
+        getNewLine: () => "\n",
       });
-      const diagnostics = output.diagnostics ?? [];
-      const errors = diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
-      if (errors.length) {
-        const message = ts.formatDiagnosticsWithColorAndContext(errors, {
-          getCanonicalFileName: (value) => value,
-          getCurrentDirectory: () => root,
-          getNewLine: () => "\n",
-        });
-        throw new Error(message);
-      }
-      const destination = path.join(distSrcDir, relative.replace(/\.(ts|tsx)$/, ".js"));
-      await fs.mkdir(path.dirname(destination), { recursive: true });
-      await fs.writeFile(destination, addJsExtensions(output.outputText), "utf8");
-    }),
-  );
+      throw new Error(message);
+    }
+    const destination = path.join(distSrcDir, relative.replace(/\.(ts|tsx)$/, ".js"));
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.writeFile(destination, addJsExtensions(output.outputText), "utf8");
+  }
 }
 
 async function copyVendor() {

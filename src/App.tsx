@@ -2072,7 +2072,7 @@ function LogExerciseCard({
 }) {
   const exercise = findExercise(exerciseLog.exerciseId);
   const cardio = workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseLog.exerciseId);
-  const previous = exercise ? previousExercisePerformance(allLogs, log.date, exercise.name) : undefined;
+  const previous = exercise ? previousExercisePerformance(allLogs, log.date, exercise) : undefined;
 
   const updateSet = (setId: string, patch: Partial<SetLog>) => {
     if (!exercise) return;

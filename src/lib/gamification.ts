@@ -1464,7 +1464,7 @@ function nextFocusCue(data: AppData, date: string, overrideDayKey?: DayKey): str
     .filter((item) => exerciseComparisonMatches(item.exercise, firstExercise))
     .at(-1);
   if (prior) return `Next target: add 1 clean rep on ${prior.exercise?.name} before increasing weight.`;
-  return workout.intent ?? `Focus: ${workout.subtitle}.`;
+  return workout.intent ?? workout.subtitle;
 }
 
 export function buildWorkoutRecap(workoutId: string, data: AppData): WorkoutRecap | null {
