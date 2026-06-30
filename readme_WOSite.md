@@ -282,3 +282,7 @@ General warm-ups use simple Done controls only. Pre-exercise ramp-ups also use D
 Rest days show optional posture work instead of lifting warm-ups. The posture routine is intended for rest days or after lifting, not before heavy lifting.
 
 The Routine page also lists movements to avoid before lifting: long static stretches, long dead hangs, high-rep push-ups, band arm circuits, aggressive shoulder dislocates, and weighted lateral raise warm-up sets. These are intentionally kept out of the pre-lifting warm-up because they can add fatigue, reduce performance, or irritate joints.
+
+## Production Restore Note
+
+If production renders as unstyled plain HTML, verify the deployed app shell before changing app data or Supabase settings. The likely cause is an incomplete `dist` upload, especially a missing `dist/src/styles.css` or vendor module files. Rebuild with `npx netlify build --context production`, confirm `dist/config.js` has non-empty Supabase values and `dist/src/styles.css` exists, then deploy with `npx netlify deploy --prod --dir=dist --no-build`.

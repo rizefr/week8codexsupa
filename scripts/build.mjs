@@ -133,8 +133,47 @@ async function writeConfig() {
     supabaseUrl: process.env.SUPABASE_URL ?? "",
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? "",
   };
+  const isProductionContext = process.env.CONTEXT === "production";
+  if (isProductionContext && (!config.supabaseUrl || !config.supabaseAnonKey)) {
+    throw new Error(
+      "Production build is missing SUPABASE_URL or SUPABASE_ANON_KEY. Run `npx netlify build --context production` so Netlify injects the live Cloud Sync config.",
+    );
+  }
   const body = `window.__TRAINING_APP_CONFIG__ = ${JSON.stringify(config, null, 2)};\n`;
   await fs.writeFile(path.join(distDir, "config.js"), body, "utf8");
+}
+
+async function verifyBuildOutput() {
+  const requiredFiles = [
+    "index.html",
+    "config.js",
+    "src/main.js",
+    "src/App.js",
+    "src/styles.css",
+    "vendor/preact/preact.module.js",
+    "vendor/preact/hooks.module.js",
+    "vendor/preact/compat.module.js",
+    "vendor/preact/client.mjs",
+    "vendor/preact/jsxRuntime.module.js",
+  ];
+  const missing = [];
+  for (const relativePath of requiredFiles) {
+    const filePath = path.join(distDir, relativePath);
+    try {
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile() || stats.size === 0) missing.push(relativePath);
+    } catch {
+      missing.push(relativePath);
+    }
+  }
+  if (missing.length) {
+    throw new Error(`Build output is incomplete. Missing required app-shell files: ${missing.join(", ")}`);
+  }
+
+  const index = await fs.readFile(path.join(distDir, "index.html"), "utf8");
+  if (!index.includes("./src/styles.css") || !index.includes("./src/main.js")) {
+    throw new Error("Build output index.html does not link the app stylesheet and module entry.");
+  }
 }
 
 await fs.rm(distDir, { recursive: true, force: true });
@@ -143,4 +182,5 @@ await buildSource();
 await copyVendor();
 await writeConfig();
 await writeIndex();
+await verifyBuildOutput();
 console.log("Built native ESM app to dist/");

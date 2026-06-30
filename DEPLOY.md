@@ -51,6 +51,19 @@ npx netlify deploy --prod --dir=dist --no-build
 
 Do not use `npm run build && npx netlify deploy --prod --dir=dist --no-build` unless `SUPABASE_URL` and `SUPABASE_ANON_KEY` are already set in your local shell. That path can upload a working app with an empty `config.js`, which makes Cloud Sync appear unconfigured even though Netlify has the variables.
 
+### Production app shell restore / asset warning
+
+If the live app ever renders as plain HTML on a white background, first check whether the deployed stylesheet or module files are missing. The app shell requires at least:
+
+- `dist/index.html`
+- `dist/src/main.js`
+- `dist/src/App.js`
+- `dist/src/styles.css`
+- `dist/vendor/preact/*`
+- `dist/config.js` with non-empty Supabase values for production
+
+The build script now fails when required app-shell files are missing. For production, use the Netlify production-context build before `--no-build` deploys so the public Supabase config and static assets are generated together. Do not manually assemble a partial `dist` or deploy a directory that is missing `src/styles.css`.
+
 ## 4. Use On Your Phone
 
 1. Open the Netlify URL on your phone.
