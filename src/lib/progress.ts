@@ -198,6 +198,20 @@ export function cardioInputsAreValid(duration?: string): boolean {
   return value > 0 && value <= 600;
 }
 
+export function exerciseLogHasComparablePerformance(log: ExerciseLog, exercise = findExercise(log.exerciseId)): boolean {
+  if (!exercise) return !!log.cardio?.completed && cardioInputsAreValid(log.cardio.duration);
+  const trackingType = trackingTypeForExercise(exercise);
+  return log.sets.some((set) => {
+    if (!set.completed) return false;
+    if (trackingType === "timed") return validSecondValue(set.seconds) > 0;
+    const repsValid = exercise.unilateral
+      ? (validRepValue(set.leftReps) > 0 && validRepValue(set.rightReps) > 0) || validRepValue(set.reps) > 0
+      : validRepValue(set.reps) > 0;
+    if (!repsValid) return false;
+    return !loadRequiredForExercise(exercise) || validLoadValue(set.weight) > 0;
+  });
+}
+
 export function exerciseNameForId(exerciseId: string): string {
   const exercise = findExercise(exerciseId);
   if (exercise) return exercise.name;
@@ -314,6 +328,26 @@ export function completedSetCount(log: WorkoutLog): number {
   return log.exerciseLogs.reduce((total, exerciseLog) => total + exerciseLog.sets.filter((set) => set.completed).length, 0);
 }
 
+// Estimated 1RM via the Epley formula. Display-only: PR detection stays on
+// measured loads/reps, never on estimates.
+export function epleyE1RM(weight: number, reps: number): number {
+  if (weight <= 0 || reps <= 0) return 0;
+  if (reps === 1) return weight;
+  return weight * (1 + reps / 30);
+}
+
+export function bestSessionE1RM(log: ExerciseLog, exercise = findExercise(log.exerciseId)): number {
+  if (trackingTypeForExercise(exercise) !== "weighted-reps") return 0;
+  return log.sets.reduce((best, set) => {
+    if (!set.completed) return best;
+    const weight = validLoadValue(set.weight);
+    const reps = exercise?.unilateral
+      ? Math.min(validRepValue(set.leftReps) || validRepValue(set.reps), validRepValue(set.rightReps) || validRepValue(set.reps))
+      : validRepValue(set.reps);
+    return Math.max(best, epleyE1RM(weight, reps));
+  }, 0);
+}
+
 export function completedExerciseCount(log: WorkoutLog): number {
   return log.exerciseLogs.filter((exerciseLog) => exerciseLog.completed || exerciseLog.cardio?.completed).length;
 }
@@ -345,7 +379,7 @@ export function plannedTrainingDaysElapsedThisWeek(settings: ProgramSettings, da
 
 export function weeklySummaries(logs: WorkoutLog[], settings: ProgramSettings) {
   const maxLoggedWeek = Math.max(
-    8,
+    1,
     ...logs.map((log) => log.week || getProgramWeek(settings.startDate || log.date, log.date)),
     getProgramWeek(settings.startDate || todayISO(), todayISO()),
   );
@@ -529,7 +563,7 @@ export function exerciseSessions(
     .flatMap((log) =>
       log.exerciseLogs
         .map((exerciseLog) => ({ workout: log, exerciseLog, exercise: findExercise(exerciseLog.exerciseId) }))
-        .filter((item) => matches(item.exercise, exerciseQuery)),
+        .filter((item) => matches(item.exercise, exerciseQuery) && exerciseLogHasComparablePerformance(item.exerciseLog, item.exercise)),
     )
     .sort((a, b) => a.workout.date.localeCompare(b.workout.date));
 }

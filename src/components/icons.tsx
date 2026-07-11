@@ -107,7 +107,7 @@ export function Dumbbell(props: IconProps) {
 export function Flame(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M12 22c4 0 7-3 7-7 0-3-2-5-4-7 .3 2-1 3-2 3-2 0-1-4-5-7 .5 5-3 6-3 11 0 4 3 7 7 7Z" />
+      <path d="M12 22c4 0 7-3 7-7 0-3-2-5-4-7 .3 2-1 3-2 3-2 0-1-4-5-7 .5 5-3 6-3 11 0 4 3 7 7 7Z" fill="currentColor" fillOpacity="0.22" />
     </Icon>
   );
 }
@@ -145,9 +145,9 @@ export function LineChart(props: IconProps) {
 export function MoreHorizontal(props: IconProps) {
   return (
     <Icon {...props}>
-      <circle cx="5" cy="12" r="1" />
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="19" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
     </Icon>
   );
 }
@@ -155,7 +155,7 @@ export function MoreHorizontal(props: IconProps) {
 export function Play(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M8 5v14l11-7Z" />
+      <path d="M8 5v14l11-7Z" fill="currentColor" fillOpacity="0.25" />
     </Icon>
   );
 }
@@ -222,7 +222,7 @@ export function Trash2(props: IconProps) {
 export function Weight(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M7 7h10l2 14H5Z" />
+      <path d="M7 7h10l2 14H5Z" fill="currentColor" fillOpacity="0.16" />
       <path d="M9 7a3 3 0 0 1 6 0" />
       <path d="M12 12v3" />
     </Icon>

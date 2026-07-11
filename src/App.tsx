@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -49,6 +49,7 @@ import { addDays, dayKeyForDate, formatDate, getCycleInfo, todayISO } from "./li
 import {
   allExercises,
   autoCompletedSet,
+  bestSessionE1RM,
   bodyWeightChange,
   canonicalExerciseKey,
   comparisonExerciseKey,
@@ -64,6 +65,7 @@ import {
   effectiveProgramStartDate,
   effortLabelForExercise,
   exerciseAliasLabel,
+  exerciseLogHasComparablePerformance,
   exerciseNameForId,
   exerciseSessions,
   exerciseVolume,
@@ -111,6 +113,7 @@ import {
 import {
   Achievement,
   achievementProgressPreview,
+  availableXPForDay,
   buildTodayMission,
   buildWorkoutRecap,
   calculateGamification,
@@ -122,8 +125,11 @@ import {
   getGamificationSettings,
   loggingQualityForWorkout,
   mergeGamificationSettings,
+  PRRecord,
 } from "./lib/gamification";
 import { calculateMuscleProgress, muscleGroupOrder, muscleLabels, MuscleProgress, musclesForWorkout, weeklyMuscleFocus } from "./lib/muscles";
+import { parseRestSeconds, RestTimer, RestTimerState } from "./components/RestTimer";
+import { ToastItem, ToastStack } from "./components/Toasts";
 import { buildBodyCompositionSummary, buildDashboardCoachSummary, buildExerciseHelp, buildNextBestActionCue, buildTrendDirection, buildWorkoutCoachSummary } from "./lib/coach";
 
 type Page = "dashboard" | "today" | "routine" | "logger" | "recap" | "progress" | "weight" | "history" | "settings";
@@ -182,6 +188,61 @@ function navigate(page: Page, id?: string) {
 
 function classNames(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(" ");
+}
+
+function streakHeadline(streaks: GamificationSummary["streaks"]): string {
+  const top = Math.max(streaks.dailyCheckIn.current, streaks.workout.current);
+  if (top > 0) return `${top}-Day Streak`;
+  return "No Active Streak";
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
+// Eased number count-up for celebration values; renders the final value
+// immediately when disabled (reduced motion, celebrations off, seen recaps).
+function useCountUp(target: number, enabled: boolean, duration = 900): number {
+  const [value, setValue] = useState(enabled ? 0 : target);
+  useEffect(() => {
+    if (!enabled) {
+      setValue(target);
+      return;
+    }
+    let frame = 0;
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(target * eased));
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [target, enabled]);
+  return value;
+}
+
+const CONFETTI_COLORS = ["#3dd6a3", "#73a7ff", "#f5b84b", "#b78cff", "#ff6978"];
+
+function ConfettiBurst() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 24 }, (_, index) => ({
+        left: `${(index * 41) % 100}%`,
+        background: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
+        animationDelay: `${(index % 8) * 0.09}s`,
+        "--confetti-duration": `${1.8 + ((index * 7) % 10) / 10}s`,
+      })),
+    [],
+  );
+  return (
+    <div className="confetti-layer" aria-hidden="true">
+      {pieces.map((style, index) => (
+        <span key={index} className="confetti-piece" style={style as React.CSSProperties} />
+      ))}
+    </div>
+  );
 }
 
 function updateWarmupDrill(log: WorkoutLog, drillId: string, completed: boolean): WorkoutLog {
@@ -380,9 +441,74 @@ function App() {
     .filter((badge) => badge.unlocked && !gamification.settings.badgeUnlocks[badge.id])
     .map((badge) => badge.id);
 
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const toastIdRef = useRef(0);
+  const routeRef = useRef(route);
+  const celebrationBaseline = useRef<{ badges: Set<string>; level: number; prIds: Set<string> } | null>(null);
+  const pushToast = useCallback((toast: Omit<ToastItem, "id">) => {
+    toastIdRef.current += 1;
+    const id = toastIdRef.current;
+    setToasts((previous) => [...previous.slice(-2), { ...toast, id }]);
+  }, []);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((previous) => previous.filter((toast) => toast.id !== id));
+  }, []);
+
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    routeRef.current = route;
+  }, [route]);
+
+  // Celebration toasts fire only for changes made after the initial-load
+  // baseline, so imports or retroactive XP recalculations never cause a storm.
+  useEffect(() => {
+    if (loading) return;
+    const unlockedIds = gamification.achievements.filter((badge) => badge.unlocked).map((badge) => badge.id);
+    if (!celebrationBaseline.current) {
+      celebrationBaseline.current = {
+        badges: new Set(unlockedIds),
+        level: gamification.level.level,
+        prIds: new Set(gamification.prs.map((pr) => pr.id)),
+      };
+      return;
+    }
+    const baseline = celebrationBaseline.current;
+    const resync = () => {
+      baseline.badges = new Set(unlockedIds);
+      baseline.level = gamification.level.level;
+      baseline.prIds = new Set(gamification.prs.map((pr) => pr.id));
+    };
+    if (!gamificationEnabled || !gamification.settings.showCelebrations) {
+      resync();
+      return;
+    }
+
+    if (gamification.level.level > baseline.level) {
+      pushToast({ tone: "level", title: `Level ${gamification.level.level} — ${gamification.level.title}`, detail: "Level up! Keep stacking clean sessions." });
+    }
+    baseline.level = gamification.level.level;
+
+    const newBadges = unlockedIds.filter((id) => !baseline.badges.has(id));
+    if (newBadges.length) {
+      const badgeById = new Map(gamification.achievements.map((badge) => [badge.id, badge]));
+      newBadges.slice(0, 2).forEach((id) => {
+        const badge = badgeById.get(id);
+        if (badge) pushToast({ tone: "badge", title: `Badge unlocked: ${badge.title}`, detail: badge.description });
+      });
+      if (newBadges.length > 2) pushToast({ tone: "badge", title: `+${newBadges.length - 2} more badges unlocked`, detail: "See Progress → Achievements." });
+      newBadges.forEach((id) => baseline.badges.add(id));
+    }
+
+    const newPRs = gamification.prs.filter((pr) => !baseline.prIds.has(pr.id));
+    if (newPRs.length && routeRef.current.page === "logger") {
+      const latest = newPRs[newPRs.length - 1];
+      pushToast({ tone: "pr", title: `PR signal: ${latest.exerciseName}`, detail: latest.label });
+    }
+    newPRs.forEach((pr) => baseline.prIds.add(pr.id));
+  }, [loading, gamification]);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -395,6 +521,9 @@ function App() {
 
   useEffect(() => {
     setMobileMoreOpen(false);
+    // Hash navigation never resets scroll on its own, so page changes would
+    // otherwise land mid-scroll (most noticeable on mobile).
+    window.scrollTo(0, 0);
   }, [route.page, route.id]);
 
   useEffect(() => {
@@ -858,6 +987,8 @@ function App() {
           </button>
         </nav>
       </div>
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
@@ -956,7 +1087,7 @@ function Dashboard({
         : recentVolume[0] === recentVolume[1]
           ? "Holding steady"
           : "Down from last session";
-  const mission = buildTodayMission(data, cloudStatus.pendingSync);
+  const mission = buildTodayMission(data, cloudStatus.pendingSync, gamification);
   const todayLog = data.workoutLogs.find((log) => log.date === today && (log.status === "draft" || log.status === "completed"));
   const draftLogs = data.workoutLogs.filter((log) => log.status === "draft").slice(0, 3);
   const heatPreview = gamification.activities.slice(-35);
@@ -968,9 +1099,9 @@ function Dashboard({
     .filter((badge) => !badge.unlocked)
     .sort((a, b) => (b.progressCurrent / Math.max(1, b.progressTarget)) - (a.progressCurrent / Math.max(1, a.progressTarget)))[0];
   const coach = buildDashboardCoachSummary(data, gamification);
-  const scoreReasons = coach.lockInReasons.slice(0, 3);
   const nextCue = buildNextBestActionCue(data, gamification);
   const player = gamification.playerStatus;
+  const compactMode = gamification.settings.compactMode;
   const dailyQuests = gamification.dailyQuests;
   const weeklyChallenge = gamification.weeklyChallenge;
   const topMasteries = [...weeklyMuscleProgress].sort((a, b) => b.score - a.score).slice(0, 3);
@@ -997,6 +1128,7 @@ function Dashboard({
               <p className="mission-subtitle">{mission.subtitle}</p>
               <div className="mission-tags">
                 <span className="available-xp-tag">Up to {mission.availableXP} XP available</span>
+                {gamification.streaks.comebackReady && <span className="comeback-tag">Comeback ready · +20 XP for any check-in today</span>}
                 {mission.focusCue && <span className="focus-cue-tag">Focus: {mission.focusCue}</span>}
               </div>
               {!!todayMuscles.length && (
@@ -1063,21 +1195,6 @@ function Dashboard({
             </section>
           )}
 
-          <section className="player-status-panel premium-card">
-            <div className="player-status-main">
-              <span className="eyebrow-accent">Player Status</span>
-              <h2>{player.archetype}</h2>
-              <p>{player.momentumStatus} · {player.cycleLabel}</p>
-              <div className="status-chip-row">
-                <span>{player.weeklyProgress}</span>
-                <span>Next unlock: {player.nextUnlock}</span>
-              </div>
-            </div>
-            <div className="player-status-reasons">
-              {player.reasons.map((reason) => <span key={reason}>{reason}</span>)}
-            </div>
-          </section>
-
           <section className="game-grid">
             <article className="game-card level-card telemetry-card premium-glass">
               <div className="game-card-heading">
@@ -1103,12 +1220,24 @@ function Dashboard({
                 <span>{gamification.executionScore.overall}</span>
                 <small>/100</small>
               </div>
-              <div>
+              <div className="lock-in-detail">
                 <span className="eyebrow-accent" style={{ color: "var(--amber)" }}>Lock-In Score</span>
                 <h3>{gamification.executionScore.label}</h3>
-                <ul style={{ paddingLeft: "1.1rem", margin: "0.4rem 0 0", color: "var(--muted)", fontSize: "0.82rem" }}>
-                  {scoreReasons.map((reason) => <li key={reason}>{reason}</li>)}
-                </ul>
+                <div className="score-breakdown">
+                  {([
+                    ["Consistency", gamification.executionScore.consistency],
+                    ["Logging", gamification.executionScore.logging],
+                    ["Recovery", gamification.executionScore.recovery],
+                    ["Progression", gamification.executionScore.progression],
+                    ["Body weight", gamification.executionScore.bodyWeight],
+                  ] as Array<[string, number]>).map(([label, value]) => (
+                    <div key={label} className="score-breakdown-row">
+                      <span>{label}</span>
+                      <div className="score-breakdown-meter"><i style={{ width: `${value}%` }} /></div>
+                      <strong>{value}</strong>
+                    </div>
+                  ))}
+                </div>
               </div>
             </article>
 
@@ -1130,20 +1259,23 @@ function Dashboard({
                 <Flame size={16} className="streak-fire-icon" />
               </div>
               <div className="streak-main-value">
-                <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Streak Active</h3>
+                <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{streakHeadline(gamification.streaks)}</h3>
               </div>
               <div className="streak-sub-details">
                 <div>
                   <span>Daily check-in</span>
                   <strong>{gamification.streaks.dailyCheckIn.current}</strong>
+                  <em>best {gamification.streaks.dailyCheckIn.best}</em>
                 </div>
                 <div>
                   <span>Workout</span>
                   <strong>{gamification.streaks.workout.current}</strong>
+                  <em>best {gamification.streaks.workout.best}</em>
                 </div>
                 <div>
                   <span>Perfect weeks</span>
                   <strong>{gamification.streaks.weeklyCompletion.current}</strong>
+                  <em>best {gamification.streaks.weeklyCompletion.best}</em>
                 </div>
               </div>
               <small style={{ display: "block", marginTop: "0.6rem", color: "var(--muted)", fontSize: "0.76rem" }}>
@@ -1152,6 +1284,24 @@ function Dashboard({
             </article>
           </section>
 
+          {!compactMode && (
+            <section className="player-status-panel premium-card">
+              <div className="player-status-main">
+                <span className="eyebrow-accent">Player Status</span>
+                <h2>{player.archetype}</h2>
+                <p>{player.momentumStatus} · {player.cycleLabel}</p>
+                <div className="status-chip-row">
+                  <span>{player.weeklyProgress}</span>
+                  <span>Next unlock: {player.nextUnlock}</span>
+                </div>
+              </div>
+              <div className="player-status-reasons">
+                {player.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+              </div>
+            </section>
+          )}
+
+          {!compactMode && (
           <section className="game-grid two objective-grid">
             <article className="panel premium-glass quest-panel">
               <div className="section-heading">
@@ -1159,6 +1309,9 @@ function Dashboard({
                   <p className="eyebrow">Daily Quests</p>
                   <h3>Today's objectives</h3>
                 </div>
+                <span className={classNames("completion-state", dailyQuests.length > 0 && dailyQuests.every((quest) => quest.completed) && "complete")}>
+                  {dailyQuests.length > 0 && dailyQuests.every((quest) => quest.completed) ? "All cleared" : "Display-only goals"}
+                </span>
               </div>
               <div className="quest-list">
                 {dailyQuests.map((quest) => (
@@ -1178,7 +1331,7 @@ function Dashboard({
                   <h3>{weeklyChallenge.title}</h3>
                 </div>
                 <span className={classNames("completion-state", weeklyChallenge.completed && "complete")}>
-                  {weeklyChallenge.completed ? "Cleared" : `${weeklyChallenge.progressCurrent}/${weeklyChallenge.progressTarget}`}
+                  {weeklyChallenge.completed ? "Challenge cleared" : `${weeklyChallenge.progressCurrent}/${weeklyChallenge.progressTarget}`}
                 </span>
               </div>
               <p>{weeklyChallenge.detail}</p>
@@ -1191,6 +1344,7 @@ function Dashboard({
               )}
             </article>
           </section>
+          )}
 
           <section className="panel heat-preview-panel">
             <div className="section-heading">
@@ -1204,6 +1358,7 @@ function Dashboard({
             <HeatMap activities={heatPreview} compact />
           </section>
 
+          {!compactMode && (
           <section className="game-grid two">
             <article className="panel premium-glass">
               <div className="section-heading">
@@ -1230,6 +1385,7 @@ function Dashboard({
               />
             </article>
           </section>
+          )}
 
           <section className="panel weekly-review-card premium-glass">
             <div className="section-heading">
@@ -1342,11 +1498,14 @@ function Dashboard({
           </div>
         </div>
         <div className="week-strip">
-          {weeklySchedule.map((item, index) => {
-            const date = addDays(startDate, (currentWeek - 1) * 7 + index);
+          {weeklySchedule.map((item) => {
+            // Program weeks anchor to the start date's weekday, so map each
+            // schedule slot to the matching weekday inside this week's window.
+            const weekStart = addDays(startDate, (currentWeek - 1) * 7);
+            const date = Array.from({ length: 7 }, (_, offset) => addDays(weekStart, offset)).find((candidate) => dayKeyForDate(candidate) === item.key) ?? weekStart;
             const log = data.workoutLogs.find((entry) => entry.date === date && entry.status === "completed");
             return (
-              <button key={item.key} className={classNames("week-day", item.key === dayKey && "today")} onClick={() => startWorkout(date)}>
+              <button key={item.key} className={classNames("week-day", date === today && "today")} onClick={() => startWorkout(date)}>
                 <span>{item.day.slice(0, 3)}</span>
                 <strong>{workoutDays[item.key].shortTitle}</strong>
                 <small>{log ? "Done" : isTrainingDay(item.key) ? "Planned" : "Recover"}</small>
@@ -1799,6 +1958,7 @@ function LoggerPage({
   startWorkout: (date?: string, performedDayKey?: DayKey) => void;
   gamification: GamificationSummary;
 }) {
+  const [restTimer, setRestTimer] = useState<RestTimerState | null>(null);
   const log = data.workoutLogs.find((item) => item.id === logId);
   if (!log) {
     return (
@@ -1818,7 +1978,12 @@ function LoggerPage({
   const updateLog = (mutator: (current: WorkoutLog) => WorkoutLog) => onSave(mutator(log));
   const loggingQuality = loggingQualityForWorkout(log);
   const prCount = gamification.prs.filter((pr) => pr.workoutId === log.id).length;
-  const possibleXP = isTrainingDay(log.dayKey) ? (workout.cardio ? 185 : 170) : 40;
+  const possibleXP = availableXPForDay(log.dayKey);
+  const handleSetCompleted = (exercise: Exercise) => {
+    if (log.status !== "draft") return;
+    const seconds = parseRestSeconds(exercise.rest);
+    if (seconds > 0) setRestTimer({ endsAt: Date.now() + seconds * 1000, total: seconds, exerciseName: exercise.name });
+  };
   const primaryWarmups = isTrainingDay(log.dayKey) ? warmupsForDay(log.dayKey, "general") : postureWarmups();
   const warmupTitle = isTrainingDay(log.dayKey) ? "Pre-Workout Warm-Up" : "Optional Posture Routine";
   const toggleWarmup = (drillId: string, completed: boolean) => updateLog((current) => updateWarmupDrill(current, drillId, completed));
@@ -1966,6 +2131,7 @@ function LoggerPage({
           allLogs={data.workoutLogs}
           warmupLog={log.warmupLog}
           onWarmupToggle={toggleWarmup}
+          onSetCompleted={handleSetCompleted}
           onChange={(nextExerciseLog) =>
             updateLog((current) => ({
               ...current,
@@ -1991,6 +2157,15 @@ function LoggerPage({
           </button>
         </div>
       </section>
+
+      {restTimer && log.status === "draft" && (
+        <RestTimer
+          timer={restTimer}
+          vibrateOnDone={gamification.settings.showCelebrations}
+          onExtend={() => setRestTimer((current) => (current ? { ...current, endsAt: current.endsAt + 30_000, total: current.total + 30 } : current))}
+          onDismiss={() => setRestTimer(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2009,9 +2184,38 @@ function RecapPage({
   startWorkout: (date?: string, performedDayKey?: DayKey) => void;
 }) {
   const recap = logId ? buildWorkoutRecap(logId, data) : null;
+  // Captured per recap id before markSeen persists — replays stay static.
+  const wasUnseen = useMemo(() => !!logId && !gamification.settings.seenRecaps.includes(logId), [logId]);
+  const celebrate = gamification.settings.enabled && gamification.settings.showCelebrations && wasUnseen && !prefersReducedMotion();
   useEffect(() => {
     if (recap?.log.id) markSeen(recap.log.id);
   }, [recap?.log.id]);
+
+  const shownXP = useCountUp(recap?.xpEarned ?? 0, celebrate);
+  const shownScore = useCountUp(recap?.workoutScore ?? 0, celebrate);
+  const shownSets = useCountUp(recap?.setsCompleted ?? 0, celebrate);
+  const shownQuality = useCountUp(recap?.loggingQuality ?? 0, celebrate);
+  const finalPercent = recap?.level.progressPercent ?? 0;
+  const startPercent = recap ? (recap.leveledUp ? 0 : recap.levelBefore.progressPercent) : 0;
+  const [barWidth, setBarWidth] = useState(celebrate ? startPercent : finalPercent);
+  useEffect(() => {
+    if (!recap) return;
+    if (!celebrate) {
+      setBarWidth(finalPercent);
+      return;
+    }
+    setBarWidth(startPercent);
+    const timeout = window.setTimeout(() => setBarWidth(finalPercent), 300);
+    return () => window.clearTimeout(timeout);
+  }, [recap?.log.id, celebrate]);
+  const [confettiOn, setConfettiOn] = useState(false);
+  useEffect(() => {
+    if (!celebrate || !recap || (!recap.leveledUp && !recap.prs.length)) return;
+    setConfettiOn(true);
+    const timeout = window.setTimeout(() => setConfettiOn(false), 2600);
+    return () => window.clearTimeout(timeout);
+  }, [recap?.log.id, celebrate]);
+
   if (!recap) {
     return (
       <section className="panel empty-state">
@@ -2031,10 +2235,11 @@ function RecapPage({
   const warmupSummary = warmupCompletionSummary(recap.log);
   return (
     <div className="content-stack">
-      <section className="recap-hero premium-card pulse-glow">
+      <section className="recap-hero premium-card pulse-glow" style={{ position: "relative", overflow: "hidden" }}>
+        {confettiOn && <ConfettiBurst />}
         <span className="eyebrow-accent">Workout Complete</span>
-        <h2 className="animated-value" style={{ fontSize: "2.4rem", margin: "0.2rem 0", color: "#3dd6a3", textShadow: "0 0 12px rgba(61, 214, 163, 0.3)" }}>
-          +{recap.xpEarned} XP
+        <h2 className="animated-value" style={{ fontSize: "2.4rem", margin: "0.2rem 0", color: "var(--green)", textShadow: "0 0 12px var(--green-a38)" }}>
+          +{shownXP} XP
         </h2>
         <p style={{ color: "var(--muted)", fontSize: "0.95rem" }}>
           {recap.log.workoutTitle} · {formatDate(recap.log.date, { weekday: "long", year: "numeric" })}
@@ -2046,13 +2251,20 @@ function RecapPage({
         )}
         <div className="xp-bar-container" style={{ marginTop: "1rem" }}>
           <div className="xp-bar large" style={{ background: "rgba(255,255,255,0.06)", height: "8px", borderRadius: "4px" }}>
-            <i style={{ width: `${recap.level.progressPercent}%`, background: "linear-gradient(90deg, #3dd6a3, #73a7ff)", borderRadius: "4px" }} />
+            <i className="animated-fill" style={{ width: `${barWidth}%`, background: "linear-gradient(90deg, var(--green), var(--blue))", borderRadius: "4px" }} />
           </div>
           <div className="xp-bar-labels">
             <span>Level {recap.level.level}</span>
             <span>{recap.level.progressPercent}% to Level {recap.level.level + 1}</span>
           </div>
         </div>
+        {recap.leveledUp && (
+          <div className="level-up-hero">
+            <span>Level Up</span>
+            <strong>Level {recap.level.level} — {recap.level.title}</strong>
+            <small>This session pushed you from Level {recap.levelBefore.level} to Level {recap.level.level}.</small>
+          </div>
+        )}
       </section>
 
       {warmupSummary.hasWarmups && (
@@ -2073,7 +2285,7 @@ function RecapPage({
             <span style={{ color: "var(--amber)", display: "inline-flex" }}><BarChart3 size={16} /></span>
           </div>
           <div className="score-value-flex">
-            <h3 className="animated-value">{recap.workoutScore}<span>/100</span></h3>
+            <h3 className="animated-value">{shownScore}<span>/100</span></h3>
             <span className="score-badge-indicator" style={{ background: recap.workoutScore >= 80 ? "rgba(61, 214, 163, 0.1)" : "rgba(245, 184, 75, 0.1)", color: recap.workoutScore >= 80 ? "var(--green)" : "var(--amber)", border: recap.workoutScore >= 80 ? "1px solid rgba(61, 214, 163, 0.2)" : "1px solid rgba(245, 184, 75, 0.2)" }}>
               {recap.workoutScore >= 90 ? "Perfect" : recap.workoutScore >= 75 ? "Excellent" : "Solid"}
             </span>
@@ -2087,7 +2299,7 @@ function RecapPage({
             <span style={{ color: "var(--blue)", display: "inline-flex" }}><Dumbbell size={16} /></span>
           </div>
           <div className="score-value-flex">
-            <h3 className="animated-value">{recap.setsCompleted}<span> sets</span></h3>
+            <h3 className="animated-value">{shownSets}<span> sets</span></h3>
           </div>
           <p className="score-detail-sub">{recap.exercisesCompleted} exercises logged.</p>
         </article>
@@ -2098,7 +2310,7 @@ function RecapPage({
             <span style={{ color: "var(--green)", display: "inline-flex" }}><CheckCircle2 size={16} /></span>
           </div>
           <div className="score-value-flex">
-            <h3 className="animated-value">{recap.loggingQuality}<span>%</span></h3>
+            <h3 className="animated-value">{shownQuality}<span>%</span></h3>
           </div>
           <p className="score-detail-sub">Set details and variables completed.</p>
         </article>
@@ -2109,7 +2321,7 @@ function RecapPage({
             <Flame size={16} className="streak-fire-icon" />
           </div>
           <div className="streak-main-value">
-            <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Streak Active</h3>
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{streakHeadline(gamification.streaks)}</h3>
           </div>
           <p className="score-detail-sub" style={{ fontSize: "0.74rem" }}>{recap.streakText}</p>
         </article>
@@ -2264,7 +2476,15 @@ function RecapPage({
       </section>
 
       {gamification.settings.showCelebrations && (
-        <div className="celebration-line">Clean execution logged. Keep the routine boring enough to repeat.</div>
+        <div className="celebration-line">
+          {recap.leveledUp
+            ? `Level ${recap.level.level} reached — the boring reps are compounding.`
+            : recap.prs.length > 0
+              ? `${recap.prs.length} PR signal${recap.prs.length === 1 ? "" : "s"} today. Same lifts, more output — that is the whole game.`
+              : recap.loggingQuality >= 90
+                ? "Clean execution logged. Keep the routine boring enough to repeat."
+                : "Session banked. Tighten up set logging next time for full credit."}
+        </div>
       )}
     </div>
   );
@@ -2277,6 +2497,7 @@ function LogExerciseCard({
   warmupLog,
   onWarmupToggle,
   onChange,
+  onSetCompleted,
 }: {
   log: WorkoutLog;
   exerciseLog: ExerciseLog;
@@ -2284,6 +2505,7 @@ function LogExerciseCard({
   warmupLog?: WorkoutLog["warmupLog"];
   onWarmupToggle: (drillId: string, completed: boolean) => void;
   onChange: (log: ExerciseLog) => void;
+  onSetCompleted?: (exercise: Exercise) => void;
 }) {
   const exercise = findExercise(exerciseLog.exerciseId);
   const cardio = workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseLog.exerciseId);
@@ -2291,10 +2513,17 @@ function LogExerciseCard({
 
   const updateSet = (setId: string, patch: Partial<SetLog>) => {
     if (!exercise) return;
+    const before = exerciseLog.sets.find((set) => set.id === setId);
     const sets = exerciseLog.sets.map((set) => {
       if (set.id !== setId) return set;
       return autoCompletedSet({ ...set, ...patch }, exercise);
     });
+    const after = sets.find((set) => set.id === setId);
+    // A set finishing (inputs became valid) starts the rest timer — but not
+    // when the change is just the manual completion-override toggle.
+    if (before && after && !before.completed && after.completed && !("completionOverride" in patch)) {
+      onSetCompleted?.(exercise);
+    }
     onChange({
       ...exerciseLog,
       sets,
@@ -2585,8 +2814,6 @@ function MuscleRegion({
       tabIndex={0}
       aria-pressed={selected}
       aria-label={`${muscleLabels[group]}: ${progress?.trend ?? "No recent work"}, ${progress?.sets ?? 0} completed sets`}
-      onClickCapture={select}
-      onPointerDownCapture={select}
       onPointerDown={select}
       onClick={select}
       onKeyDown={(event) => {
@@ -2613,6 +2840,11 @@ function AnatomyFigure({
   selectedGroup?: MuscleGroup;
   onSelect: (group: MuscleGroup) => void;
 }) {
+  const selectFromPointer = (event: React.SyntheticEvent<SVGSVGElement>) => {
+    const target = event.target as Element;
+    const group = target.closest?.("[data-muscle]")?.getAttribute("data-muscle") as MuscleGroup | null;
+    if (group) onSelect(group);
+  };
   const region = (group: MuscleGroup, paths: React.ReactNode) => (
     <MuscleRegion group={group} progress={byGroup.get(group)} selected={selectedGroup === group} onSelect={onSelect}>
       {paths}
@@ -2622,8 +2854,15 @@ function AnatomyFigure({
     <div className="anatomy-view">
       <span>{view === "front" ? "Anterior" : "Posterior"}</span>
       <div className="anatomy-canvas">
-        <img src={`./src/assets/anatomy-${view}.webp`} alt="" aria-hidden="true" decoding="async" />
-        <svg viewBox="0 0 240 520" role="img" aria-labelledby={`${view}-body-title ${view}-body-desc`}>
+        <svg
+          viewBox="0 0 240 520"
+          role="img"
+          aria-labelledby={`${view}-body-title ${view}-body-desc`}
+          onPointerDown={selectFromPointer}
+          onMouseDown={selectFromPointer}
+          onTouchStart={selectFromPointer}
+          onClick={selectFromPointer}
+        >
         <title id={`${view}-body-title`}>{view === "front" ? "Front" : "Back"} muscle stimulus map</title>
         <desc id={`${view}-body-desc`}>Select a muscle region to inspect completed sets, exercise sources, personal records, and the next useful focus.</desc>
         <defs>
@@ -2637,6 +2876,16 @@ function AnatomyFigure({
             <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
         </defs>
+        <image
+          className="anatomy-reference"
+          href={`./src/assets/anatomy-${view}.webp`}
+          x="-120"
+          y="-4"
+          width="480"
+          height="570"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        />
         <path className="anatomy-silhouette" fill={`url(#${view}-body-surface)`} d="M104 16 C86 25 82 45 88 63 L98 77 L93 91 C69 97 50 110 43 137 L25 220 C22 235 31 243 40 237 L58 171 L66 234 L78 290 L66 399 L74 501 L103 501 L119 402 L121 301 L137 402 L153 501 L182 501 L190 399 L178 290 L190 234 L198 171 L216 237 C225 243 234 235 231 220 L213 137 C206 110 187 97 163 91 L158 77 L168 63 C174 45 170 25 152 16 C137 8 119 8 104 16 Z" />
         <path className="anatomy-midline" d="M128 84 L128 293 M128 307 L128 490" />
         <path className="anatomy-contour" d="M91 91 Q128 109 165 91 M67 233 Q128 249 189 233 M79 290 Q128 305 177 290" />
@@ -2673,6 +2922,12 @@ function AnatomyFigure({
 function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 days", compact = false }: { progress: MuscleProgress[]; title?: string; rangeLabel?: string; compact?: boolean }) {
   const firstActive = progress.find((item) => item.score > 0);
   const [selectedGroup, setSelectedGroup] = useState(firstActive?.group);
+  // When the range changes and the previous selection has no data in the new
+  // range, snap to the most relevant group instead of showing a stale card.
+  useEffect(() => {
+    const current = selectedGroup ? progress.find((item) => item.group === selectedGroup) : undefined;
+    if (!current || current.score <= 0) setSelectedGroup(firstActive?.group);
+  }, [progress]);
   const byGroup = new Map(progress.map((item) => [item.group, item]));
   const selected = selectedGroup ? byGroup.get(selectedGroup) : undefined;
   const activeGroups = [...progress].filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
@@ -2693,13 +2948,6 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
           <AnatomyFigure view="back" byGroup={byGroup} selectedGroup={selectedGroup} onSelect={setSelectedGroup} />
         </div>
         <div className="muscle-map-details">
-          {!compact && <div className="muscle-picker" role="list" aria-label="Muscle groups">
-            {progress.map((item) => (
-              <button key={item.group} className={classNames(`intensity-${item.intensity}`, selectedGroup === item.group && "selected")} onClick={() => setSelectedGroup(item.group)}>
-                <span>{item.label}</span><strong>{item.sets} sets</strong>
-              </button>
-            ))}
-          </div>}
           {selected && (
             <div className="muscle-detail-card" aria-live="polite">
               <p className="eyebrow">{selected.mastery}</p>
@@ -2716,6 +2964,13 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
           )}
           {!selected && <div className="muscle-detail-card empty-muscle-detail"><p className="eyebrow">Ready for input</p><h3>No recent muscle stimulus</h3><span>Complete a workout and this map will show where the scheduled work landed.</span></div>}
           {compact && !!activeGroups.length && <div className="muscle-impact-list">{activeGroups.slice(0, 5).map((item) => <button key={item.group} onClick={() => setSelectedGroup(item.group)}><span>{item.label}</span><strong>{item.mastery}</strong></button>)}</div>}
+          {!compact && <div className="muscle-picker" role="list" aria-label="Muscle groups">
+            {progress.map((item) => (
+              <button key={item.group} className={classNames(`intensity-${item.intensity}`, selectedGroup === item.group && "selected")} onClick={() => setSelectedGroup(item.group)}>
+                <span>{item.label}</span><strong>{item.sets} sets</strong>
+              </button>
+            ))}
+          </div>}
         </div>
       </div>
       <p className="muscle-method-note">Primary-target sets count 1.0 stimulus point; supporting targets count 0.5. Valid PRs add 2 points. Colors summarize workload, not injury or recovery status.</p>
@@ -2724,23 +2979,54 @@ function MuscleMapPanel({ progress, title = "Muscle Map", rangeLabel = "Last 7 d
 }
 
 function PRTimeline({ gamification }: { gamification: GamificationSummary }) {
-  const records = [...gamification.prs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-  if (!records.length) return <div className="empty-state compact">Repeat an exercise in a later completed session to establish a real PR.</div>;
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
+  if (!gamification.prs.length) return <div className="empty-state compact">Repeat an exercise in a later completed session to establish a real PR.</div>;
+
+  // Group by session so a single big workout reads as one win, not eight rows.
+  const byDate = new Map<string, PRRecord[]>();
+  [...gamification.prs].sort((a, b) => b.date.localeCompare(a.date)).forEach((pr) => {
+    const list = byDate.get(pr.date) ?? [];
+    list.push(pr);
+    byDate.set(pr.date, list);
+  });
+  const sessions = Array.from(byDate.entries()).slice(0, 5);
+
   return (
-    <div className="pr-timeline" aria-label="Recent personal record timeline">
-      {records.map((pr) => {
-        const exercise = allExercises.find((item) => item.name === pr.exerciseName);
-        const muscle = exercise?.muscleGroups?.[0];
-        const xp = gamification.xpEvents.find((event) => event.key === pr.id)?.xp;
-        const tier = classifyPRTier(pr);
+    <div className="pr-timeline" aria-label="Recent personal records grouped by session">
+      {sessions.map(([date, prs]) => {
+        const expanded = expandedDates.has(date);
+        const visible = expanded ? prs : prs.slice(0, 3);
+        const majors = prs.filter((pr) => classifyPRTier(pr).title === "Major PR").length;
+        const xp = prs.reduce((sum, pr) => sum + (gamification.xpEvents.find((event) => event.key === pr.id)?.xp ?? 0), 0);
         return (
-          <article key={pr.id} className="pr-timeline-item">
-            <div className="pr-timeline-marker"><Dumbbell size={16} /></div>
-            <div>
-              <div className="pr-timeline-meta"><time>{formatDate(pr.date)}</time>{muscle && <span>{muscleLabels[muscle]}</span>}{xp && <strong>+{xp} XP</strong>}<span className="pr-sparkle">{tier.title}</span></div>
-              <h4>{pr.exerciseName}</h4>
-              <p>{tier.label}</p>
+          <article key={date} className="pr-session-group">
+            <div className="pr-session-header">
+              <strong>{formatDate(date)}</strong>
+              <span>{prs.length} PR signal{prs.length === 1 ? "" : "s"}{majors ? ` · ${majors} major` : ""}{xp ? ` · +${xp} XP` : ""}</span>
             </div>
+            {visible.map((pr) => {
+              const tier = classifyPRTier(pr);
+              return (
+                <div key={pr.id} className="pr-session-entry">
+                  <span className={classNames("pr-tier-chip", tier.title === "Major PR" && "major")}>{tier.title}</span>
+                  <span><strong>{pr.exerciseName}</strong> — {tier.label}</span>
+                </div>
+              );
+            })}
+            {prs.length > 3 && (
+              <button
+                type="button"
+                className="pr-more-button"
+                onClick={() => setExpandedDates((previous) => {
+                  const next = new Set(previous);
+                  if (next.has(date)) next.delete(date);
+                  else next.add(date);
+                  return next;
+                })}
+              >
+                {expanded ? "Show less" : `+${prs.length - 3} more from this session`}
+              </button>
+            )}
           </article>
         );
       })}
@@ -2794,6 +3080,8 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
     return bestSetReps(session.exerciseLog, session.exercise);
   });
   const repPoints = sessions.map((session) => totalRepsForExerciseLog(session.exerciseLog, session.exercise));
+  const e1rmPoints = sessions.map((session) => Math.round(bestSessionE1RM(session.exerciseLog, session.exercise)));
+  const bestE1RM = e1rmPoints.length ? Math.max(...e1rmPoints) : 0;
   const best = sessions.reduce(
     (winner, session) => (progressMetricValue(session.exerciseLog, session.exercise) > progressMetricValue(winner?.exerciseLog as ExerciseLog, winner?.exercise) ? session : winner),
     sessions[0],
@@ -2914,6 +3202,9 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
               <StatCard icon={Dumbbell} label="Logged sessions" value={`${sessions.length}`} detail="Completed sessions with this exercise." />
               <StatCard icon={BarChart3} label={trendLabels.best} value={bestLabel} detail={best ? formatDate(best.workout.date) : "Log this exercise first."} />
               <StatCard icon={Activity} label="Last vs previous" value={compareLastTwoExerciseSessions(data.workoutLogs, selectedExercise)} detail="Uses tracking-aware reps, seconds, assistance, or volume." />
+              {selectedTrackingType === "weighted-reps" && bestE1RM > 0 && (
+                <StatCard icon={LineChart} label="Best est. 1RM" value={`${bestE1RM.toLocaleString()} lb${loadLabelForExercise(selectedExerciseMeta) === "per DB" ? " per DB" : ""}`} detail="Epley estimate from your best completed set. Display only — PRs still use real loads." />
+              )}
             </div>
             {latestExerciseResult && (
               <div className={classNames("exercise-result-chip", latestExerciseResult.state, "wide")}>
@@ -2926,6 +3217,7 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
               <ChartPanel title={trendLabels.primary} values={primaryPoints} stroke="#f5b84b" />
               <ChartPanel title={trendLabels.secondary} values={secondaryPoints} />
               {selectedTrackingType === "weighted-reps" && <ChartPanel title="Total Reps" values={repPoints} stroke="#73a7ff" />}
+              {selectedTrackingType === "weighted-reps" && bestE1RM > 0 && <ChartPanel title="Est. 1RM (Epley)" values={e1rmPoints} stroke="#b78cff" />}
             </div>
             <div className="responsive-table">
               <table>
@@ -2936,6 +3228,7 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
                     <th>Sets</th>
                     <th>{trendLabels.tableMetric}</th>
                     <th>{trendLabels.secondary}</th>
+                    {selectedTrackingType === "weighted-reps" && <th>Est. 1RM</th>}
                     <th>Guidance</th>
                   </tr>
                 </thead>
@@ -2955,6 +3248,9 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
                               ? `${bestTimedSet(session.exerciseLog)} sec`
                               : `${bestSetReps(session.exerciseLog, session.exercise)} reps`
                       }</td>
+                      {selectedTrackingType === "weighted-reps" && (
+                        <td>{Math.round(bestSessionE1RM(session.exerciseLog, session.exercise)) || "-"}</td>
+                      )}
                       <td>{progressionAdvice(session.exerciseLog)}</td>
                     </tr>
                   ))}
@@ -3139,12 +3435,13 @@ function BadgeGrid({ achievements }: { achievements: Achievement[] }) {
   return (
     <div className="badge-layout">
       <div>
-        <p className="eyebrow">Recently unlocked</p>
+        <p className="eyebrow">Unlocked · {unlocked.length}/{achievements.length}</p>
         <div className="badge-grid">
-          {(unlocked.slice(0, 6).length ? unlocked.slice(0, 6) : []).map((badge) => (
+          {unlocked.map((badge) => (
             <article key={badge.id} className="badge-card unlocked">
               <strong>{badge.title}</strong>
               <span>{badge.description}</span>
+              {badge.unlockedAt && <small>{formatDate(badge.unlockedAt.slice(0, 10))}</small>}
             </article>
           ))}
           {!unlocked.length && <div className="empty-state compact">Complete workouts to unlock badges.</div>}
@@ -3153,7 +3450,7 @@ function BadgeGrid({ achievements }: { achievements: Achievement[] }) {
       <div>
         <p className="eyebrow">Next badges</p>
         <div className="badge-grid">
-          {locked.slice(0, 8).map((badge) => {
+          {locked.map((badge) => {
             const preview = achievementProgressPreview(badge);
             return (
               <article key={badge.id} className="badge-card">
@@ -3361,7 +3658,10 @@ function HistoryPage({ data, gamification, startWorkout }: { data: AppData; gami
                   {log.status === "completed" && (
                     <div className="history-result-strip">
                       {log.exerciseLogs
-                        .filter((item) => !!findExercise(item.exerciseId))
+                        .filter((item) => {
+                          const exercise = findExercise(item.exerciseId);
+                          return !!exercise && exerciseLogHasComparablePerformance(item, exercise);
+                        })
                         .slice(0, 4)
                         .map((exerciseLog) => {
                           const result = classifyExerciseResult(log, exerciseLog, data, gamification.prs);

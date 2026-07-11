@@ -14,7 +14,9 @@ The app still works without Supabase, but data is then saved only in the current
 3. Run `supabase/schema.sql`.
 4. Go to Authentication > URL Configuration.
 5. Set the Site URL to your final Netlify URL after deployment.
-6. Add the same Netlify URL to Redirect URLs.
+6. Add the same Netlify URL to Redirect URLs. If a magic link lands on the wrong
+   page, verify both the Supabase Site URL and redirect allow-list before changing
+   the app's existing auth flow.
 
 ## 2. Get Supabase Public Keys
 

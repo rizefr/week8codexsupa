@@ -11,6 +11,7 @@ import {
   completedSetCount,
   effectiveProgramStartDate,
   exerciseComparisonMatches,
+  exerciseLogHasComparablePerformance,
   exerciseVolume,
   findExercise,
   isTrainingDay,
@@ -207,6 +208,8 @@ export interface WorkoutRecap {
   xpEarned: number;
   xpEvents: XPEvent[];
   level: LevelInfo;
+  levelBefore: LevelInfo;
+  leveledUp: boolean;
   workoutScore: number;
   exercisesCompleted: number;
   setsCompleted: number;
@@ -237,7 +240,6 @@ export interface GamificationSummary {
   playerStatus: PlayerStatus;
   dailyQuests: DailyQuest[];
   weeklyChallenge: WeeklyChallenge;
-  achievementPreviews: AchievementPreview[];
 }
 
 export const defaultGamificationSettings: GamificationSettings = {
@@ -253,6 +255,21 @@ export const defaultGamificationSettings: GamificationSettings = {
 
 const HARD_CARDIO_RE = /\b(HIIT|sprint|running|run|interval|max effort|hard stair|stairmaster interval|all out)\b/i;
 const PAIN_RE = /pain|pinch|sharp|ache|hurt|irritation|regress|dropped|worse|shortened|sleep bad|bad sleep|heavy warm/i;
+
+// App state is replaced immutably on every change, so derived summaries can be
+// cached per data object. Entries also key on the calendar day because most
+// derivations depend on todayISO().
+function memoizeByInput<T extends object, R>(fn: (input: T) => R): (input: T) => R {
+  const cache = new WeakMap<T, { day: string; value: R }>();
+  return (input: T) => {
+    const day = todayISO();
+    const hit = cache.get(input);
+    if (hit && hit.day === day) return hit.value;
+    const value = fn(input);
+    cache.set(input, { day, value });
+    return value;
+  };
+}
 
 export function getGamificationSettings(settings?: ProgramSettings): GamificationSettings {
   const incoming = settings?.gamification;
@@ -348,7 +365,8 @@ function hasPainOrRegression(log: WorkoutLog): boolean {
   return PAIN_RE.test(haystack);
 }
 
-export function canonicalWorkoutLogs(logs: WorkoutLog[]): WorkoutLog[] {
+export const canonicalWorkoutLogs = memoizeByInput(canonicalWorkoutLogsImpl);
+function canonicalWorkoutLogsImpl(logs: WorkoutLog[]): WorkoutLog[] {
   const byDay = new Map<string, WorkoutLog>();
   [...logs]
     .sort((a, b) => {
@@ -389,7 +407,8 @@ function allScheduledWorkoutsComplete(logs: WorkoutLog[], week: number): boolean
   return days.size >= trainingDayKeys.length;
 }
 
-export function detectPRs(data: AppData): PRRecord[] {
+export const detectPRs = memoizeByInput(detectPRsImpl);
+function detectPRsImpl(data: AppData): PRRecord[] {
   const prs: PRRecord[] = [];
   const bestWeight = new Map<string, number>();
   const bestRepsAtWeight = new Map<string, number>();
@@ -632,7 +651,8 @@ function levelTitle(level: number): string {
   return "Beginner Builder";
 }
 
-export function buildXPEvents(data: AppData): XPEvent[] {
+export const buildXPEvents = memoizeByInput(buildXPEventsImpl);
+function buildXPEventsImpl(data: AppData): XPEvent[] {
   const logs = canonicalWorkoutLogs(data.workoutLogs);
   const prRecords = detectPRs(data);
   const events = new Map<string, XPEvent>();
@@ -710,14 +730,17 @@ export function buildXPEvents(data: AppData): XPEvent[] {
   }
 
   const actionDates = dailyActionDates(data);
+  let run = 0;
   actionDates.forEach((date, index) => {
     const previous = actionDates[index - 1];
     const gap = previous ? daysSince(previous, date) - 1 : 0;
     if (gap >= 2) {
       add({ key: `comeback:${date}`, kind: "comeback", date, label: "Comeback check-in", xp: 20 });
     }
-    const streakBonus = Math.min(15, 5 + index + 1);
-    if (index > 0) add({ key: `streak:${date}`, kind: "streak", date, label: "Consistency streak", xp: streakBonus });
+    run = previous && gap === 0 ? run + 1 : 1;
+    if (run > 1) {
+      add({ key: `streak:${date}`, kind: "streak", date, label: `Consistency streak · day ${run}`, xp: Math.min(15, 5 + run) });
+    }
   });
 
   return Array.from(events.values()).sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key));
@@ -734,7 +757,8 @@ function dailyActionDates(data: AppData): string[] {
   return Array.from(dates).sort();
 }
 
-export function calculateStreaks(data: AppData): StreakStats {
+export const calculateStreaks = memoizeByInput(calculateStreaksImpl);
+function calculateStreaksImpl(data: AppData): StreakStats {
   const logs = canonicalWorkoutLogs(data.workoutLogs);
   const completedTrainingDates = logs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).map((log) => log.date).sort();
   const actionDates = dailyActionDates(data);
@@ -939,14 +963,20 @@ export function unlockAchievements(data: AppData, memory: GamificationSettings):
     { id: "no-missed-week", title: "No Missed Workouts This Week", description: "Finish a program week with no missed scheduled workouts.", progressCurrent: fullWeeks.includes(currentWeek) ? 1 : 0, progressTarget: 1 },
     { id: "comeback-workout", title: "Comeback Workout", description: "Return after missing multiple days.", progressCurrent: comeback ? 1 : 0, progressTarget: 1 },
     { id: "clean-execution-week", title: "Clean Execution Week", description: "Finish a week without hard-cardio or rest-day lifting flags.", progressCurrent: cleanWeeks, progressTarget: 1 },
+    { id: "fifty-workouts", title: "50 Workouts Completed", description: "Complete 50 scheduled workouts.", progressCurrent: completedWorkouts.length, progressTarget: 50 },
+    { id: "pr-hunter", title: "PR Hunter", description: "Bank 10 conservative PRs.", progressCurrent: prs.length, progressTarget: 10 },
+    { id: "twenty-one-day-checkin", title: "21-Day Check-In Streak", description: "Build a 21-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 21 },
+    { id: "quarter-million-club", title: "250K Volume Club", description: "Log 250,000 lb of lifetime working volume.", progressCurrent: Math.round(completedWorkouts.reduce((sum, log) => sum + workoutVolume(log), 0)), progressTarget: 250000 },
   ];
 
   return definitions.map((badge) => {
-    const unlocked = badge.progressCurrent >= badge.progressTarget;
     const existing = memory.badgeUnlocks[badge.id];
+    // A persisted unlock is authoritative: earned badges never re-lock even if
+    // the underlying metric is later recomputed differently.
+    const unlocked = badge.progressCurrent >= badge.progressTarget || !!existing;
     return {
       ...badge,
-      progressCurrent: Math.min(badge.progressCurrent, badge.progressTarget),
+      progressCurrent: unlocked ? badge.progressTarget : Math.min(badge.progressCurrent, badge.progressTarget),
       unlocked,
       unlockedAt: existing ?? (unlocked ? firstMeaningfulDate(data) : undefined),
     };
@@ -1030,7 +1060,7 @@ export function achievementProgressPreview(badge: Achievement): AchievementPrevi
     ? "Unlocked"
     : remaining === 1
       ? `1 ${unit} away`
-      : `${current} / ${badge.progressTarget}`;
+      : `${current.toLocaleString()} / ${badge.progressTarget.toLocaleString()}`;
   return {
     id: badge.id,
     title: badge.title,
@@ -1082,14 +1112,24 @@ export function classifyExerciseResult(
       detail: "No routine metadata was found for this item.",
     };
   }
+  if (!exerciseLogHasComparablePerformance(exerciseLog, exercise)) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "neutral",
+      label: "Not logged",
+      detail: "No valid completed performance was recorded for this exercise.",
+    };
+  }
   const matchingPRs = prs.filter((pr) => pr.workoutId === workout.id && prMatchesExercise(pr, exercise));
-  if (matchingPRs.some((pr) => classifyPRTier(pr).title === "Major PR")) {
+  const majorPR = matchingPRs.find((pr) => classifyPRTier(pr).title === "Major PR");
+  if (majorPR) {
     return {
       exerciseLogId: exerciseLog.id,
       exerciseName,
       state: "major-pr",
       label: "Major PR",
-      detail: classifyPRTier(matchingPRs[0]).label,
+      detail: classifyPRTier(majorPR).label,
     };
   }
   if (matchingPRs.length) {
@@ -1166,7 +1206,7 @@ export function baselineRecordsForWorkout(workout: WorkoutLog, data: AppData): B
   return workout.exerciseLogs.flatMap((exerciseLog) => {
     const exercise = findExercise(exerciseLog.exerciseId);
     if (!exercise || exercise.prEligible === false) return [];
-    if (!exerciseLog.completed && !exerciseLog.sets.some((set) => set.completed)) return [];
+    if (!exerciseLogHasComparablePerformance(exerciseLog, exercise)) return [];
     if (previousExercisePerformance(data.workoutLogs, workout.date, exercise)) return [];
     return [{
       id: `baseline:${workout.id}:${exercise.id}`,
@@ -1271,7 +1311,9 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
   }
 
   const currentWeekCompleted = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).length;
-  if (!quests.some((quest) => quest.tone === "progress") && currentWeekCompleted >= 1) {
+  // Rep-target quests only make sense on training days — rest days must never
+  // suggest lifting.
+  if (isTrainingDay(activeDayKey) && !quests.some((quest) => quest.tone === "progress") && currentWeekCompleted >= 1) {
     const comparableExercise = workout.exercises.find((exercise) =>
       !!previousExercisePerformance(data.workoutLogs, date, exercise),
     );
@@ -1401,7 +1443,8 @@ export function buildPlayerStatus(data: AppData, summary: Pick<GamificationSumma
   };
 }
 
-export function calculateGamification(data: AppData): GamificationSummary {
+export const calculateGamification = memoizeByInput(calculateGamificationImpl);
+function calculateGamificationImpl(data: AppData): GamificationSummary {
   const settings = getGamificationSettings(data.settings);
   const xpEvents = buildXPEvents(data);
   const totalXP = xpEvents.reduce((sum, event) => sum + event.xp, 0);
@@ -1426,11 +1469,18 @@ export function calculateGamification(data: AppData): GamificationSummary {
     playerStatus: buildPlayerStatus(data, summarySeed),
     dailyQuests: buildDailyQuests(data),
     weeklyChallenge: buildWeeklyChallenge(data),
-    achievementPreviews: achievements.filter((badge) => !badge.unlocked).map(achievementProgressPreview).sort((a, b) => b.progressPercent - a.progressPercent).slice(0, 4),
   };
 }
 
-export function buildTodayMission(data: AppData, hasSyncIssue = false): TodayMission {
+// Sum of the day-scoped XP events a perfect day can earn (streak/comeback
+// bonuses excluded because they depend on surrounding days).
+export function availableXPForDay(dayKey: DayKey): number {
+  if (!isTrainingDay(dayKey)) return 40;
+  const workout = getWorkoutByKey(dayKey);
+  return 100 + 40 + 30 + (workout.cardio?.length ? 15 : 0);
+}
+
+export function buildTodayMission(data: AppData, hasSyncIssue = false, summary?: GamificationSummary): TodayMission {
   const today = todayISO();
   const scheduledDayKey = dayKeyForDate(today);
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs, today);
@@ -1440,7 +1490,7 @@ export function buildTodayMission(data: AppData, hasSyncIssue = false): TodayMis
   const completed = todayLogs.find((log) => log.status === "completed");
   const activeDayKey = draft?.dayKey ?? completed?.dayKey ?? scheduledDayKey;
   const workout = workoutDays[activeDayKey];
-  const gamification = calculateGamification(data);
+  const gamification = summary ?? calculateGamification(data);
   const weeklyWeights = data.bodyWeights.filter((entry) => getCycleInfo(startDate, entry.date).programWeek === cycle.programWeek).length;
   const weightLoggedToday = data.bodyWeights.some((entry) => entry.date === today);
   const weightSkippedToday = new Set(gamification.settings.bodyWeightPromptSkips ?? []).has(today);
@@ -1452,7 +1502,7 @@ export function buildTodayMission(data: AppData, hasSyncIssue = false): TodayMis
   const base = {
     title: isTrainingDay(activeDayKey) ? workout.shortTitle : "Recovery Day",
     subtitle: `Program Week ${cycle.programWeek} · Cycle ${cycle.cycle}, Week ${cycle.weekInCycle} of 8${overrideText}`,
-    availableXP: isTrainingDay(activeDayKey) ? (workout.cardio ? 185 : 170) : 40,
+    availableXP: availableXPForDay(activeDayKey),
     focusCue,
   };
   if (hasSyncIssue) return { ...base, nextBestAction: "Sync data so today starts clean.", action: "sync" };
@@ -1496,11 +1546,14 @@ export function buildWorkoutRecap(workoutId: string, data: AppData): WorkoutReca
       loggingQuality * 0.25 +
       Math.min(10, prs.length * 4),
   );
+  const levelBefore = calculateLevelFromXP(summary.totalXP - xpEarned);
   return {
     log,
     xpEarned,
     xpEvents,
     level: summary.level,
+    levelBefore,
+    leveledUp: summary.level.level > levelBefore.level,
     workoutScore: Math.max(0, Math.min(100, workoutScore)),
     exercisesCompleted: completedExerciseCount(log),
     setsCompleted: completedSetCount(log),
@@ -1514,7 +1567,10 @@ export function buildWorkoutRecap(workoutId: string, data: AppData): WorkoutReca
     baselines: baselineRecordsForWorkout(log, data),
     lockInReasons: buildPlayerStatus(data, summary).reasons,
     exerciseResults: log.exerciseLogs
-      .filter((exerciseLog) => !!findExercise(exerciseLog.exerciseId))
+      .filter((exerciseLog) => {
+        const exercise = findExercise(exerciseLog.exerciseId);
+        return !!exercise && exerciseLogHasComparablePerformance(exerciseLog, exercise);
+      })
       .map((exerciseLog) => classifyExerciseResult(log, exerciseLog, data, summary.prs)),
   };
 }

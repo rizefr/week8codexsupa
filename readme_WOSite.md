@@ -101,6 +101,8 @@ Key modules:
 - `src/lib/coach.ts`: exercise-specific feedback, exercise help, weekly focus, dashboard cues, body composition summary, trend direction, and next best action copy.
 - `src/lib/gamification.ts`: XP events, levels, streaks, execution score, daily activity, achievements, player status, quests, weekly challenge, PRs, baselines, result states, and workout recap.
 - `src/lib/muscles.ts`: muscle scoring, mastery states, muscle labels, weekly focus, and muscle-map detail data.
+- `src/components/RestTimer.tsx`: a non-blocking rest timer launched from valid set completion without turning warm-ups into work sets.
+- `src/components/Toasts.tsx`: reduced-motion-safe, dismissible PR, badge, and level feedback.
 
 The game layer rewards correct execution:
 
@@ -209,7 +211,20 @@ Requirements to preserve:
 - muscle map, heat map, charts, badges, and tables must not create page-level horizontal overflow
 - reduced-motion preferences should be respected
 
+## Current Product Polish
+
+- Completing a valid working set can start a compact rest timer based on the programmed rest text. The timer is UI-only and does not alter workout data.
+- PR, badge, and level feedback uses a restrained toast layer and compact recap treatment rather than persistent new XP events.
+- Dates are converted to ISO strings from local calendar parts so late-evening mobile sessions do not shift into the next UTC date.
+- Weighted trend cards may show an Epley estimated one-rep max as an informational comparison. It is not a PR category and does not award XP.
+- The muscle map uses detailed front/back anatomy references inside the same interactive SVG coordinate space as the heat regions. Muscle selection, scoring, and accessible list controls remain derived from logged work.
+- Daily Quests and Weekly Challenges are coaching goals only. They do not award XP in the current system and cannot be farmed by edits.
+
 ## Deployment Workflow
+
+### Hosting decision
+
+Netlify remains the production host for this repository. A July 2026 Sites plugin preflight confirmed that Sites can manage runtime environment variables and versioned deployments, but this app's native static ESM build does not emit the required Cloudflare-compatible `dist/server/index.js` entrypoint. The plugin's current authentication guidance also requires separately confirming a platform path before moving an app-owned public/external sign-in flow such as Supabase magic links. Moving hosts would therefore require a build-output and authentication migration, not a like-for-like deployment. Preserve the existing Netlify project until Sites supports this exact static-SPA plus Supabase-auth contract without weakening sign-in or stored-data behavior.
 
 Use the documented safe Netlify production-context flow:
 
@@ -262,7 +277,7 @@ Browser/mobile QA checklist:
 - Supabase client calls are implemented with direct REST/Auth fetches, not `@supabase/supabase-js`.
 - Local Git operations may hang in this checkout. If that happens, use GitHub API readback/commit workflows carefully and report it.
 - Quests and weekly challenges are display-only in the current pass to avoid persistence risk and XP farming.
-- The muscle map is a stylized visual, not a medical anatomy reference.
+- The muscle map uses detailed anatomy artwork with simplified interactive heat regions. It is a training visualization, not a diagnostic medical chart.
 
 ## Future Improvement Ideas
 
