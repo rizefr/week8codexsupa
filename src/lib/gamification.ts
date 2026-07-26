@@ -330,6 +330,7 @@ function setIsFullyLogged(set: SetLog, exercise: Exercise): boolean {
 }
 
 function exerciseLogFullyLogged(log: ExerciseLog): boolean {
+  if (log.skipped) return false;
   const exercise = findExercise(log.exerciseId);
   if (!exercise) return !!log.cardio?.completed;
   if (!exercise.sets) return true;
@@ -341,6 +342,7 @@ export function loggingQualityForWorkout(log: WorkoutLog): number {
   const setCount = planned.reduce((sum, exerciseLog) => sum + exerciseLog.sets.length, 0);
   if (!setCount) return log.restDay?.completed ? 100 : 0;
   const fullyLogged = planned.reduce((sum, exerciseLog) => {
+    if (exerciseLog.skipped) return sum;
     const exercise = findExercise(exerciseLog.exerciseId);
     if (!exercise) return sum;
     return sum + exerciseLog.sets.filter((set) => setIsFullyLogged(set, exercise)).length;
@@ -437,7 +439,7 @@ function detectPRsImpl(data: AppData): PRRecord[] {
     .forEach((workout) => {
       workout.exerciseLogs.forEach((exerciseLog) => {
         const exercise = findExercise(exerciseLog.exerciseId);
-        if (!exercise || exercise.prEligible === false) return;
+        if (!exercise || exerciseLog.skipped || exercise.prEligible === false) return;
         const name = exercise.name;
         const normalized = comparisonExerciseKey(exercise);
         const completedSets = exerciseLog.sets.filter((set) => set.completed);
@@ -1103,6 +1105,15 @@ export function classifyExerciseResult(
 ): ExerciseResultRecord {
   const exercise = findExercise(exerciseLog.exerciseId);
   const exerciseName = exercise?.name ?? "Workout item";
+  if (exerciseLog.skipped) {
+    return {
+      exerciseLogId: exerciseLog.id,
+      exerciseName,
+      state: "neutral",
+      label: "Skipped",
+      detail: "Skipped for this workout only; no completion, PR, volume, or progression credit was awarded.",
+    };
+  }
   if (!exercise) {
     return {
       exerciseLogId: exerciseLog.id,

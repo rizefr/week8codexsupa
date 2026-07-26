@@ -4,8 +4,11 @@ import {
   completedSetCount,
   epleyE1RM,
   exerciseSessions,
+  nextSessionRecommendation,
+  previousSessionNotes,
   previousExercisePerformance,
   previousSetSummary,
+  setHasRecordedPerformance,
   weeklySummaries,
   workoutVolume,
 } from "../dist/src/lib/progress.js";
@@ -136,6 +139,69 @@ assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "One-Arm DB
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "RDL")?.exercise?.name, "DB Romanian Deadlift", "Configured RDL alias should match.");
 assert.equal(previousExercisePerformance(matchingLogs, "2026-06-09", "DB Skullcrusher")?.exercise?.name, "Lying DB Triceps Extension", "Configured skullcrusher alias should match.");
 
+// A rest timer should begin as soon as performance is recorded, before load or
+// RIR has to be entered. Unilateral work waits for both sides.
+assert.equal(setHasRecordedPerformance(set({ reps: "8", weight: "", rir: "" }), byName("Low-Incline DB Press")), true);
+assert.equal(setHasRecordedPerformance(set({ leftReps: "10" }), byName("One-Arm DB Row")), false);
+assert.equal(setHasRecordedPerformance(set({ leftReps: "10", rightReps: "9" }), byName("One-Arm DB Row")), true);
+assert.equal(setHasRecordedPerformance(set({ seconds: "30" }), byName("RKC Plank")), true);
+
+const notesWorkout = logFor("2026-06-09", "Low-Incline DB Press", [set({ weight: "35", reps: "8", rir: "2", notes: "Smooth pause" })], {
+  notes: "Shoulder felt good",
+});
+notesWorkout.exerciseLogs[0].notes = "Bench notch 3";
+assert.deepEqual(
+  previousSessionNotes(notesWorkout.exerciseLogs[0], notesWorkout),
+  ["Bench notch 3", "Smooth pause", "Shoulder felt good"],
+  "Previous-performance notes should preserve exercise, set, and session context without mutating logs.",
+);
+
+const pressSetsAtTop = (weight = "35") => Array.from({ length: 4 }, (_, index) => ({
+  id: `press-top-${weight}-${index}`,
+  setNumber: index + 1,
+  target: "6-10",
+  weight,
+  reps: "10",
+  rir: "2",
+  completed: true,
+}));
+const pressSetsBuilding = Array.from({ length: 4 }, (_, index) => ({
+  id: `press-build-${index}`,
+  setNumber: index + 1,
+  target: "6-10",
+  weight: "35",
+  reps: index === 0 ? "10" : "8",
+  rir: "2",
+  completed: true,
+}));
+const oneTopSession = [logFor("2026-06-01", "Low-Incline DB Press", pressSetsAtTop())];
+assert.equal(
+  nextSessionRecommendation(oneTopSession, "2026-06-08", byName("Low-Incline DB Press")).kind,
+  "hold",
+  "One top-range session is not enough evidence to add load.",
+);
+const repeatedTopSessions = [
+  ...oneTopSession,
+  logFor("2026-06-08", "Low-Incline DB Press", pressSetsAtTop()),
+];
+assert.equal(
+  nextSessionRecommendation(repeatedTopSessions, "2026-06-15", byName("Low-Incline DB Press")).kind,
+  "add-load",
+  "Two confirmed top-range sessions at the same load and target RIR can support a conservative load increase.",
+);
+assert.equal(
+  nextSessionRecommendation([logFor("2026-06-01", "Low-Incline DB Press", pressSetsBuilding)], "2026-06-08", byName("Low-Incline DB Press")).kind,
+  "add-rep",
+  "A valid session below the top range should suggest one clean rep, not extra sets or load.",
+);
+assert.equal(
+  nextSessionRecommendation([
+    logFor("2026-06-01", "Low-Incline DB Press", pressSetsAtTop().map(({ rir, ...setWithoutRir }) => setWithoutRir)),
+  ], "2026-06-08", byName("Low-Incline DB Press")).kind,
+  "insufficient",
+  "A required target-RIR field must be present before the app gives progression advice.",
+);
+
 const baseWarmupSafetyLog = logFor("2026-06-10", "Low-Incline DB Press", [
   { id: "s1", setNumber: 1, target: "6-10", weight: "35", reps: "8", rir: "2", completed: true },
   { id: "s2", setNumber: 2, target: "6-10", weight: "35", reps: "8", rir: "2", completed: true },
@@ -156,6 +222,19 @@ assert.equal(completedSetCount(warmupDecoratedLog), completedSetCount(baseWarmup
 assert.equal(loggingQualityForWorkout(warmupDecoratedLog), loggingQualityForWorkout(baseWarmupSafetyLog), "Warm-up metadata must not affect logging quality.");
 assert.equal(previousExercisePerformance([warmupDecoratedLog], "2026-06-11", "Easy Treadmill Walk"), undefined, "Warm-up drills must not become previous exercise sessions.");
 assert.deepEqual(detectPRs({ settings: { startDate: "2026-06-01" }, workoutLogs: [warmupDecoratedLog], bodyWeights: [] }), [], "Warm-up metadata must not create PR records.");
+
+const skippedExerciseLog = {
+  ...baseWarmupSafetyLog,
+  exerciseLogs: baseWarmupSafetyLog.exerciseLogs.map((exerciseLog) => ({
+    ...exerciseLog,
+    skipped: true,
+    skippedAt: "2026-06-10T12:30:00.000Z",
+  })),
+};
+assert.equal(workoutVolume(skippedExerciseLog), 0, "Skipped exercise data must not count toward working-set volume.");
+assert.equal(completedSetCount(skippedExerciseLog), 0, "Skipped exercise data must not count as completed sets.");
+assert.equal(loggingQualityForWorkout(skippedExerciseLog), 0, "Skipped planned work must remain incomplete rather than being fabricated as a clean log.");
+assert.equal(exerciseSessions([skippedExerciseLog], "Low-Incline DB Press").length, 0, "Skipped exercises must not become comparison or PR baselines.");
 
 const partialWorkout = logFor("2026-06-11", "Low-Incline DB Press", [
   { id: "partial", setNumber: 1, target: "6-10", completed: false },

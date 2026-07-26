@@ -78,15 +78,18 @@ import {
   loadIsAssistance,
   loadLabelForExercise,
   latestBodyWeight,
+  nextSessionRecommendation,
   plannedTrainingDaysElapsedThisWeek,
   prefillWorkoutLogFromHistory,
   previousExercisePerformance,
+  previousSessionNotes,
   previousSetSummary,
   progressMetricValue,
   progressionAdvice,
   refreshProgramFields,
   rirRequiredForExercise,
   sevenDayAverage,
+  setHasRecordedPerformance,
   shouldShowLoadInput,
   targetRIRForExercise,
   targetRIRForSet,
@@ -128,7 +131,7 @@ import {
   PRRecord,
 } from "./lib/gamification";
 import { calculateMuscleProgress, muscleGroupOrder, muscleLabels, MuscleProgress, musclesForWorkout, weeklyMuscleFocus } from "./lib/muscles";
-import { parseRestSeconds, RestTimer, RestTimerState } from "./components/RestTimer";
+import { parseRestSeconds, primeRestTimerAudio, RestTimer, RestTimerState } from "./components/RestTimer";
 import { ToastItem, ToastStack } from "./components/Toasts";
 import { buildBodyCompositionSummary, buildDashboardCoachSummary, buildExerciseHelp, buildNextBestActionCue, buildTrendDirection, buildWorkoutCoachSummary } from "./lib/coach";
 
@@ -396,6 +399,13 @@ function syncLabel(saveState: SaveState, loading: boolean, cloudStatus: ReturnTy
   return cloudStatus.signedIn ? "Saved to cloud" : "Saved locally";
 }
 
+function syncTimestamp(value?: string): string {
+  if (!value) return "No confirmed cloud sync yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Cloud sync time unavailable";
+  return `Last cloud sync ${date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+}
+
 function SyncStatus({
   saveState,
   loading,
@@ -412,16 +422,23 @@ function SyncStatus({
   mobile?: boolean;
 }) {
   const isActionable = saveState === "syncIssue" || cloudStatus.pendingSync;
+  const issueDetail = saveError || cloudStatus.lastError;
   return (
-    <button
-      className={classNames("save-state", mobile && "mobile-sync", saveState)}
-      onClick={isActionable ? onRetry : undefined}
-      title={saveError || cloudStatus.lastError || undefined}
-      type="button"
-    >
-      <Circle size={9} className={saveState} />
-      {syncLabel(saveState, loading, cloudStatus)}
-    </button>
+    <details className={classNames("sync-status", mobile && "mobile-sync", saveState)}>
+      <summary className="save-state" title={issueDetail || undefined}>
+        <Circle size={9} className={saveState} />
+        {syncLabel(saveState, loading, cloudStatus)}
+      </summary>
+      <div className="sync-status-panel">
+        <strong>{cloudStatus.signedIn ? "Cloud Sync connected" : cloudStatus.configured ? "Cloud Sync available" : "Cloud Sync unavailable"}</strong>
+        <span>{syncTimestamp(cloudStatus.lastSyncAt)}</span>
+        {cloudStatus.email && <span>Signed in as {cloudStatus.email}</span>}
+        {(saveState === "local" || saveState === "offline") && <span>Current changes are confirmed locally. A cloud save is not being claimed.</span>}
+        {cloudStatus.pendingSync && <span>Local changes are queued for the next successful cloud sync.</span>}
+        {issueDetail && <p>{issueDetail}</p>}
+        {isActionable && <button type="button" className="mini-action" onClick={onRetry}>Retry cloud sync</button>}
+      </div>
+    </details>
   );
 }
 
@@ -433,6 +450,8 @@ function App() {
   const [saveError, setSaveError] = useState("");
   const [cloudStatus, setCloudStatus] = useState(getCloudStatus());
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [restTimer, setRestTimer] = useState<RestTimerState | null>(null);
+  const [restTimerSoundEnabled, setRestTimerSoundEnabled] = useState(true);
   const dataRef = useRef(data);
   const mobileMoreRef = useRef<HTMLDivElement>(null);
   const gamification = useMemo(() => calculateGamification(data), [data]);
@@ -452,6 +471,17 @@ function App() {
   }, []);
   const dismissToast = useCallback((id: number) => {
     setToasts((previous) => previous.filter((toast) => toast.id !== id));
+  }, []);
+  const startRestTimer = useCallback((exercise: Exercise) => {
+    const seconds = parseRestSeconds(exercise.rest);
+    if (seconds <= 0) return;
+    primeRestTimerAudio();
+    setRestTimer({
+      endsAt: Date.now() + seconds * 1000,
+      total: seconds,
+      preset: seconds,
+      exerciseName: exercise.name,
+    });
   }, []);
 
   useEffect(() => {
@@ -886,6 +916,7 @@ function App() {
                 onDelete={removeWorkout}
                 startWorkout={startWorkout}
                 gamification={gamification}
+                onStartRest={startRestTimer}
               />
             )}
             {route.page === "recap" && (
@@ -987,6 +1018,34 @@ function App() {
           </button>
         </nav>
       </div>
+
+      {restTimer && (
+        <RestTimer
+          timer={restTimer}
+          vibrateOnDone={gamification.settings.showCelebrations}
+          soundOnDone={restTimerSoundEnabled}
+          onAdjust={(seconds) => setRestTimer((current) => {
+            if (!current) return current;
+            const remaining = Math.max(0, Math.ceil((current.endsAt - Date.now()) / 1000));
+            const nextRemaining = Math.max(30, remaining + seconds);
+            return {
+              ...current,
+              endsAt: Date.now() + nextRemaining * 1000,
+              total: Math.max(30, current.total + seconds),
+            };
+          })}
+          onReset={() => setRestTimer((current) => current ? {
+            ...current,
+            endsAt: Date.now() + current.preset * 1000,
+            total: current.preset,
+          } : current)}
+          onToggleSound={() => {
+            primeRestTimerAudio();
+            setRestTimerSoundEnabled((enabled) => !enabled);
+          }}
+          onDismiss={() => setRestTimer(null)}
+        />
+      )}
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
@@ -1950,6 +2009,7 @@ function LoggerPage({
   onDelete,
   startWorkout,
   gamification,
+  onStartRest,
 }: {
   logId?: string;
   data: AppData;
@@ -1957,8 +2017,8 @@ function LoggerPage({
   onDelete: (id: string) => void;
   startWorkout: (date?: string, performedDayKey?: DayKey) => void;
   gamification: GamificationSummary;
+  onStartRest: (exercise: Exercise) => void;
 }) {
-  const [restTimer, setRestTimer] = useState<RestTimerState | null>(null);
   const log = data.workoutLogs.find((item) => item.id === logId);
   if (!log) {
     return (
@@ -1981,8 +2041,7 @@ function LoggerPage({
   const possibleXP = availableXPForDay(log.dayKey);
   const handleSetCompleted = (exercise: Exercise) => {
     if (log.status !== "draft") return;
-    const seconds = parseRestSeconds(exercise.rest);
-    if (seconds > 0) setRestTimer({ endsAt: Date.now() + seconds * 1000, total: seconds, exerciseName: exercise.name });
+    onStartRest(exercise);
   };
   const primaryWarmups = isTrainingDay(log.dayKey) ? warmupsForDay(log.dayKey, "general") : postureWarmups();
   const warmupTitle = isTrainingDay(log.dayKey) ? "Pre-Workout Warm-Up" : "Optional Posture Routine";
@@ -1998,9 +2057,11 @@ function LoggerPage({
       exerciseLogs: log.exerciseLogs.map((exerciseLog) => ({
         ...exerciseLog,
         completed:
-          exerciseLog.completed ||
-          (!!exerciseLog.sets.length && exerciseLog.sets.every((set) => set.completed)) ||
-          !!exerciseLog.cardio?.completed,
+          !exerciseLog.skipped && (
+            exerciseLog.completed ||
+            (!!exerciseLog.sets.length && exerciseLog.sets.every((set) => set.completed)) ||
+            !!exerciseLog.cardio?.completed
+          ),
       })),
     };
     onSave(completed);
@@ -2158,14 +2219,6 @@ function LoggerPage({
         </div>
       </section>
 
-      {restTimer && log.status === "draft" && (
-        <RestTimer
-          timer={restTimer}
-          vibrateOnDone={gamification.settings.showCelebrations}
-          onExtend={() => setRestTimer((current) => (current ? { ...current, endsAt: current.endsAt + 30_000, total: current.total + 30 } : current))}
-          onDismiss={() => setRestTimer(null)}
-        />
-      )}
     </div>
   );
 }
@@ -2510,6 +2563,38 @@ function LogExerciseCard({
   const exercise = findExercise(exerciseLog.exerciseId);
   const cardio = workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseLog.exerciseId);
   const previous = exercise ? previousExercisePerformance(allLogs, log.date, exercise) : undefined;
+  const itemName = exerciseLog.performedExerciseName ?? exercise?.name ?? cardio?.name ?? "Workout item";
+  const skipExercise = () => {
+    if (log.status !== "draft") return;
+    const hasEnteredData = exerciseLog.sets.some((set) => set.completed || set.reps || set.leftReps || set.rightReps || set.seconds || set.weight) || !!exerciseLog.cardio?.duration;
+    const message = hasEnteredData
+      ? `Skip ${itemName} for today? Existing entries stay in this log but will not count toward completion, volume, PRs, trends, or progression while skipped.`
+      : `Skip ${itemName} for today? It will remain incomplete and will not count toward volume, PRs, trends, progression, or XP.`;
+    if (!window.confirm(message)) return;
+    onChange({ ...exerciseLog, skipped: true, skippedAt: new Date().toISOString(), completed: false });
+  };
+  const restoreExercise = () => {
+    const { skipped, skippedAt, skipReason, ...rest } = exerciseLog;
+    onChange(rest);
+  };
+
+  if (exerciseLog.skipped) {
+    return (
+      <section className="panel log-card skipped-exercise-card">
+        <div className="log-card-heading">
+          <div>
+            <p className="eyebrow">Skipped for this workout only</p>
+            <h3>{itemName}</h3>
+            <p>Not completed. It contributes no volume, PR, trend, progression, or XP credit.</p>
+          </div>
+          <span className="completion-state skipped">Skipped</span>
+        </div>
+        {log.status === "draft" && (
+          <button type="button" className="secondary-action" onClick={restoreExercise}>Restore exercise</button>
+        )}
+      </section>
+    );
+  }
 
   const updateSet = (setId: string, patch: Partial<SetLog>) => {
     if (!exercise) return;
@@ -2519,9 +2604,9 @@ function LogExerciseCard({
       return autoCompletedSet({ ...set, ...patch }, exercise);
     });
     const after = sets.find((set) => set.id === setId);
-    // A set finishing (inputs became valid) starts the rest timer — but not
-    // when the change is just the manual completion-override toggle.
-    if (before && after && !before.completed && after.completed && !("completionOverride" in patch)) {
+    // Start rest as soon as performance is recorded. Load and RIR can be
+    // entered afterward without delaying or restarting the timer.
+    if (before && after && !setHasRecordedPerformance(before, exercise) && setHasRecordedPerformance(after, exercise)) {
       onSetCompleted?.(exercise);
     }
     onChange({
@@ -2563,7 +2648,19 @@ function LogExerciseCard({
           <div className="previous-box">
             <strong>Previous:</strong> {formatDate(previousCardio.workout.date)}
             <span>{previousSetSummary(previousCardio.exerciseLog)}</span>
+            {!!previousSessionNotes(previousCardio.exerciseLog, previousCardio.workout).length && (
+              <details className="previous-notes">
+                <summary>Previous notes</summary>
+                {previousSessionNotes(previousCardio.exerciseLog, previousCardio.workout).map((note) => <p key={note}>{note}</p>)}
+              </details>
+            )}
           </div>
+        )}
+        {log.status === "draft" && (
+          <details className="exercise-options">
+            <summary>Exercise options</summary>
+            <button type="button" className="mini-action danger" onClick={skipExercise}>Skip cardio today</button>
+          </details>
         )}
         <div className="input-grid">
           <NumberField
@@ -2606,6 +2703,7 @@ function LogExerciseCard({
   const showRir = rirRequiredForExercise(exercise);
   const effortLabel = effortLabelForExercise(exercise);
   const displayExerciseName = exerciseLog.performedExerciseName ?? exercise.name;
+  const nextSession = nextSessionRecommendation(allLogs, log.date, exercise);
   const aliasLabel = exerciseAliasLabel(exercise);
   const exerciseWarmups = preExerciseWarmupsForExercise(log.dayKey, exercise.id);
   const applyReplacement = (replacementName: string, reason: string) => {
@@ -2670,12 +2768,39 @@ function LogExerciseCard({
           Use planned exercise instead
         </button>
       )}
+      {!exerciseLog.performedExerciseName && (
+        <div className={classNames("next-session-guidance", `tone-${nextSession.kind}`)}>
+          <span>Next-session guidance</span>
+          <strong>{nextSession.title}</strong>
+          <p>{nextSession.detail}</p>
+          <small>{nextSession.evidence}</small>
+        </div>
+      )}
+      {log.status === "draft" && (
+        <details className="exercise-options">
+          <summary>Exercise options</summary>
+          <div>
+            {parseRestSeconds(exercise.rest) > 0 && (
+              <button type="button" className="mini-action" onClick={() => onSetCompleted?.(exercise)}>
+                <Timer size={15} /> Start rest timer
+              </button>
+            )}
+            <button type="button" className="mini-action danger" onClick={skipExercise}>Skip exercise today</button>
+          </div>
+        </details>
+      )}
       {previous && (
         <div className="previous-box">
           <strong>Previous:</strong> {formatDate(previous.workout.date)} ·{" "}
           {showLoad && !loadIsAssistance(exercise) ? `${Math.round(exerciseVolume(previous.exerciseLog)).toLocaleString()} volume · ` : ""}
           {previous.exerciseLog.sets.filter((set) => set.completed).length} sets
           <span>{previousSetSummary(previous.exerciseLog, exercise)}</span>
+          {!!previousSessionNotes(previous.exerciseLog, previous.workout).length && (
+            <details className="previous-notes">
+              <summary>Previous notes</summary>
+              {previousSessionNotes(previous.exerciseLog, previous.workout).map((note) => <p key={note}>{note}</p>)}
+            </details>
+          )}
           {showLoad && (
             <button className="mini-action" type="button" onClick={copyPreviousLoad}>
               Copy previous {loadIsAssistance(exercise) ? "assistance" : "weights"}
@@ -3653,6 +3778,11 @@ function HistoryPage({ data, gamification, startWorkout }: { data: AppData; gami
                         .filter((item) => item.performedExerciseName)
                         .map((item) => `${item.performedExerciseName} for ${exerciseNameForId(item.exerciseId)}`)
                         .join(" · ")}
+                    </div>
+                  )}
+                  {log.exerciseLogs.some((item) => item.skipped) && (
+                    <div className="history-skip-note">
+                      Skipped today: {log.exerciseLogs.filter((item) => item.skipped).map((item) => exerciseNameForId(item.exerciseId)).join(" · ")}
                     </div>
                   )}
                   {log.status === "completed" && (

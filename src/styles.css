@@ -386,7 +386,7 @@ input[type="checkbox"] {
 }
 
 .save-state {
-  margin-top: auto;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 0.45rem;
@@ -396,6 +396,44 @@ input[type="checkbox"] {
   background: transparent;
   padding: 0.4rem 0;
   text-align: left;
+  cursor: pointer;
+  list-style: none;
+}
+
+.save-state::-webkit-details-marker {
+  display: none;
+}
+
+.sync-status {
+  position: relative;
+  margin-top: auto;
+}
+
+.sync-status-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.55rem);
+  z-index: 90;
+  width: min(330px, calc(100vw - 2rem));
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(10, 17, 27, 0.96);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
+  box-shadow: var(--shadow);
+  color: var(--muted-strong);
+  font-size: 0.78rem;
+}
+
+.sync-status-panel strong { color: var(--text); }
+
+.sync-status-panel p {
+  margin: 0;
+  color: #ffd4d9;
+  overflow-wrap: anywhere;
 }
 
 .save-state svg.cloud,
@@ -686,12 +724,17 @@ input[type="checkbox"] {
   width: 100%;
   aspect-ratio: 240 / 520;
   overflow: hidden;
+  isolation: isolate;
+  border-radius: var(--radius-md);
+  background: radial-gradient(circle at 50% 36%, rgba(115, 167, 255, 0.08), rgba(7, 11, 18, 0) 62%);
 }
 
 .anatomy-reference {
-  opacity: 0.78;
-  filter: invert(1) grayscale(1) contrast(1.5) brightness(0.9);
+  opacity: 0.72;
+  filter: invert(1) grayscale(0.9) contrast(1.65) brightness(0.78);
   mix-blend-mode: screen;
+  transform: translateX(2px) scaleX(0.985);
+  transform-origin: center top;
   pointer-events: none;
   user-select: none;
 }
@@ -2074,6 +2117,97 @@ tr:last-child td {
   color: var(--muted-strong);
 }
 
+.previous-notes,
+.exercise-options {
+  border-top: 1px solid var(--line);
+  padding-top: 0.45rem;
+}
+
+.previous-notes summary,
+.exercise-options summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.previous-notes p {
+  margin: 0.35rem 0 0;
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+
+.exercise-options > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.2rem;
+}
+
+.exercise-options .mini-action {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.next-session-guidance {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border: 1px solid var(--blue-a20);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(115, 167, 255, 0.09), rgba(255, 255, 255, 0.025));
+}
+
+.next-session-guidance > span {
+  color: var(--blue);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.next-session-guidance strong { color: var(--text); }
+
+.next-session-guidance p,
+.next-session-guidance small {
+  margin: 0;
+  color: var(--muted-strong);
+}
+
+.next-session-guidance.tone-add-load,
+.next-session-guidance.tone-reduce-assistance {
+  border-color: var(--green-a38);
+  background: linear-gradient(135deg, var(--green-a12), rgba(255, 255, 255, 0.025));
+}
+
+.next-session-guidance.tone-hold {
+  border-color: var(--amber-a38);
+  background: linear-gradient(135deg, var(--amber-a08), rgba(255, 255, 255, 0.025));
+}
+
+.skipped-exercise-card {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.completion-state.skipped,
+.history-skip-note {
+  border-color: var(--amber-a38);
+  color: #ffe7b5;
+  background: var(--amber-a08);
+}
+
+.history-skip-note {
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--amber-a20);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+}
+
 .mini-action {
   width: fit-content;
   border: 1px solid var(--line);
@@ -2401,14 +2535,25 @@ tr:last-child td {
     right: 0.75rem;
     bottom: calc(4.35rem + env(safe-area-inset-bottom));
     z-index: 21;
-    display: flex;
-    justify-content: center;
+    display: block;
     min-height: 44px;
     border: 1px solid var(--line);
     background: rgba(7, 11, 18, 0.92);
     border-radius: 12px;
     -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
+  }
+
+  .mobile-sync > .save-state {
+    min-height: 42px;
+    justify-content: center;
+    padding: 0 0.75rem;
+  }
+
+  .mobile-sync .sync-status-panel {
+    left: 0;
+    right: 0;
+    width: auto;
   }
 
   .bottom-nav button {
@@ -3810,13 +3955,13 @@ tr:last-child td {
   bottom: calc(1.1rem + env(safe-area-inset-bottom, 0px));
   z-index: 80;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.65rem;
   padding: 0.6rem 0.75rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--green-a38);
-  background: rgba(10, 18, 28, 0.97);
+  background: linear-gradient(145deg, rgba(20, 33, 49, 0.94), rgba(8, 15, 24, 0.97));
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5), 0 0 22px var(--green-a12);
@@ -3883,6 +4028,43 @@ tr:last-child td {
   font-weight: 700;
   cursor: pointer;
 }
+
+.rest-timer-controls {
+  position: relative;
+}
+
+.rest-timer-controls summary {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+
+.rest-timer-controls summary::-webkit-details-marker { display: none; }
+
+.rest-timer-controls > div {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.55rem);
+  width: 190px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  padding: 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(8, 15, 24, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.rest-timer-controls > div button { min-height: 44px; }
 
 .rest-timer-chip.done {
   border-color: var(--green);

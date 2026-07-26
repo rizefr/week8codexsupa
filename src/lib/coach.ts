@@ -1,7 +1,7 @@
 import { AppData, BodyWeightLog, Exercise, ExerciseLog, MuscleGroup, ReplacementOption, SetLog, WorkoutLog } from "../types";
 import { trainingDayKeys } from "../data/routine";
 import { warmupCompletionSummary } from "../data/warmups";
-import { getCycleInfo, todayISO } from "./date";
+import { addDays, getCycleInfo, todayISO } from "./date";
 import {
   bestAssistance,
   bestTimedSet,
@@ -15,6 +15,7 @@ import {
   exerciseVolume,
   findExercise,
   isTrainingDay,
+  nextSessionRecommendation,
   numericValue,
   previousExercisePerformance,
   progressionAdvice,
@@ -83,6 +84,7 @@ function clampList<T>(items: T[], limit: number): T[] {
 }
 
 function completedSets(log: ExerciseLog): SetLog[] {
+  if (log.skipped) return [];
   return log.sets.filter((set) => set.completed);
 }
 
@@ -216,14 +218,14 @@ function topRangeMessage(sets: SetLog[], exercise: Exercise): CoachInsight | nul
   if (trackingType === "assistance-reps") {
     return {
       title: "Top range hit",
-      detail: "Reduce assistance next time only if reps stay stable and the pull stays clean.",
+      detail: "Repeat this cleanly. Reduce assistance only after the app confirms the top range across comparable sessions.",
       tone: "win",
     };
   }
   if (trackingType === "weighted-reps") {
     return {
       title: "Top range hit",
-      detail: "Add load next time only if form, joints, sleep, and range of motion stayed solid.",
+      detail: "Repeat this cleanly. Add load only after the app confirms the top range across comparable sessions.",
       tone: "win",
     };
   }
@@ -433,13 +435,12 @@ export function buildProgressionSuggestion(data: AppData, exerciseName?: string)
     .map((exerciseLog) => findExercise(exerciseLog.exerciseId)?.name)
     .find(Boolean);
   if (!targetName) return "Next target: complete the next scheduled workout with clean set data.";
-  const sessions = exerciseSessions(data.workoutLogs, targetName);
-  if (sessions.length < 2) return `Next target: repeat ${targetName} once more to establish a real trend.`;
-  const latest = sessions.at(-1)!;
-  const trackingType = trackingTypeForExercise(latest.exercise);
-  if (trackingType === "assistance-reps") return `Next target: add reps on ${targetName} before reducing assistance.`;
-  if (trackingType === "timed") return `Next target: add seconds on ${targetName} only while control stays clean.`;
-  return `Next target: add one clean rep on ${targetName} before increasing load.`;
+  const exercise = exerciseSessions(data.workoutLogs, targetName).at(-1)?.exercise ?? findExercise(
+    data.workoutLogs.flatMap((log) => log.exerciseLogs).find((exerciseLog) => findExercise(exerciseLog.exerciseId)?.name === targetName)?.exerciseId ?? "",
+  );
+  if (!exercise) return `Next target: repeat ${targetName} with clean set data before changing anything.`;
+  const recommendation = nextSessionRecommendation(data.workoutLogs, addDays(todayISO(), 1), exercise);
+  return `Next target: ${recommendation.title.toLowerCase()}. ${recommendation.detail}`;
 }
 
 export function buildDashboardCoachSummary(data: AppData, gamification: GamificationSummary): DashboardCoachSummary {

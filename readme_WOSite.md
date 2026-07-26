@@ -101,7 +101,7 @@ Key modules:
 - `src/lib/coach.ts`: exercise-specific feedback, exercise help, weekly focus, dashboard cues, body composition summary, trend direction, and next best action copy.
 - `src/lib/gamification.ts`: XP events, levels, streaks, execution score, daily activity, achievements, player status, quests, weekly challenge, PRs, baselines, result states, and workout recap.
 - `src/lib/muscles.ts`: muscle scoring, mastery states, muscle labels, weekly focus, and muscle-map detail data.
-- `src/components/RestTimer.tsx`: a non-blocking rest timer launched from valid set completion without turning warm-ups into work sets.
+- `src/components/RestTimer.tsx`: a non-blocking app-shell rest timer launched when valid reps/seconds are first recorded, with reset, +/-30 seconds, session mute, vibration, and a low-volume local chime.
 - `src/components/Toasts.tsx`: reduced-motion-safe, dismissible PR, badge, and level feedback.
 
 The game layer rewards correct execution:
@@ -213,7 +213,20 @@ Requirements to preserve:
 
 ## Current Product Polish
 
-- Completing a valid working set can start a compact rest timer based on the programmed rest text. The timer is UI-only and does not alter workout data.
+- Recording valid reps or seconds starts a compact rest timer immediately from the programmed rest text; load and RIR can be entered afterward. The timer survives route changes, remains UI-only, and does not alter workout data.
+- Exercise options allow a one-workout skip with confirmation. A skipped item remains visibly incomplete and contributes no set count, volume, PR, trend, muscle stimulus, progression comparison, or exercise-result credit. Existing entries are preserved and can be restored before completion.
+- Previous-performance panels expose saved exercise, set, cardio, and workout notes behind a compact disclosure.
+
+### Conservative progression guidance
+
+Next-session guidance uses strict confirmed exercise matches, the current routine's rep range and target RIR, and completed planned sets. One top-range session produces a hold-and-confirm recommendation. A weighted load increase (or assisted-load reduction) requires two comparable top-range sessions at the same logged load/assistance and target RIR. Missing required RIR, partial planned work, pain/regression notes, or no confirmed prior session suppresses progression advice. The system never recommends extra sets.
+
+This conservative double-progression interpretation is informed by ACSM progression guidance and reviews showing that hypertrophy can occur without routine momentary failure while proximity to failure remains relevant and RIR is a practical autoregulation tool:
+
+- https://pubmed.ncbi.nlm.nih.gov/38970765/
+- https://pubmed.ncbi.nlm.nih.gov/33497853/
+- https://pubmed.ncbi.nlm.nih.gov/38563729/
+- https://acsm.org/wp-content/uploads/2025/01/Progression-Models-in-Resistance-Training-for-Healthy-Adults-Simplified.pdf
 - PR, badge, and level feedback uses a restrained toast layer and compact recap treatment rather than persistent new XP events.
 - Dates are converted to ISO strings from local calendar parts so late-evening mobile sessions do not shift into the next UTC date.
 - Weighted trend cards may show an Epley estimated one-rep max as an informational comparison. It is not a PR category and does not award XP.

@@ -186,6 +186,16 @@ export function setInputsAreValid(set: SetLog, exercise: Exercise): boolean {
   return true;
 }
 
+export function setHasRecordedPerformance(set: SetLog, exercise: Exercise): boolean {
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "timed") return validSecondValue(set.seconds) > 0;
+  if (exercise.unilateral) {
+    const bothSides = validRepValue(set.leftReps) > 0 && validRepValue(set.rightReps) > 0;
+    return bothSides || validRepValue(set.reps) > 0;
+  }
+  return validRepValue(set.reps) > 0;
+}
+
 export function autoCompletedSet(set: SetLog, exercise: Exercise): SetLog {
   return {
     ...set,
@@ -199,6 +209,7 @@ export function cardioInputsAreValid(duration?: string): boolean {
 }
 
 export function exerciseLogHasComparablePerformance(log: ExerciseLog, exercise = findExercise(log.exerciseId)): boolean {
+  if (log.skipped) return false;
   if (!exercise) return !!log.cardio?.completed && cardioInputsAreValid(log.cardio.duration);
   const trackingType = trackingTypeForExercise(exercise);
   return log.sets.some((set) => {
@@ -316,6 +327,7 @@ export function setVolume(set: SetLog, exercise?: Exercise): number {
 }
 
 export function exerciseVolume(log: ExerciseLog): number {
+  if (log.skipped) return 0;
   const exercise = findExercise(log.exerciseId);
   return log.sets.reduce((total, set) => total + setVolume(set, exercise), 0);
 }
@@ -325,7 +337,7 @@ export function workoutVolume(log: WorkoutLog): number {
 }
 
 export function completedSetCount(log: WorkoutLog): number {
-  return log.exerciseLogs.reduce((total, exerciseLog) => total + exerciseLog.sets.filter((set) => set.completed).length, 0);
+  return log.exerciseLogs.reduce((total, exerciseLog) => total + (exerciseLog.skipped ? 0 : exerciseLog.sets.filter((set) => set.completed).length), 0);
 }
 
 // Estimated 1RM via the Epley formula. Display-only: PR detection stays on
@@ -337,6 +349,7 @@ export function epleyE1RM(weight: number, reps: number): number {
 }
 
 export function bestSessionE1RM(log: ExerciseLog, exercise = findExercise(log.exerciseId)): number {
+  if (log.skipped) return 0;
   if (trackingTypeForExercise(exercise) !== "weighted-reps") return 0;
   return log.sets.reduce((best, set) => {
     if (!set.completed) return best;
@@ -349,7 +362,7 @@ export function bestSessionE1RM(log: ExerciseLog, exercise = findExercise(log.ex
 }
 
 export function completedExerciseCount(log: WorkoutLog): number {
-  return log.exerciseLogs.filter((exerciseLog) => exerciseLog.completed || exerciseLog.cardio?.completed).length;
+  return log.exerciseLogs.filter((exerciseLog) => !exerciseLog.skipped && (exerciseLog.completed || exerciseLog.cardio?.completed)).length;
 }
 
 export function totalProgramWorkouts(): number {
@@ -546,8 +559,8 @@ export function progressionAdvice(log: ExerciseLog): string {
     }
     return numericValue(set.reps) >= top;
   });
-  if (hitTop && trackingType === "assistance-reps") return "Reduce assistance next time only if reps and form stayed solid.";
-  if (hitTop && trackingType === "weighted-reps") return "Add weight next time if form, range, sleep, and joints were solid.";
+  if (hitTop && trackingType === "assistance-reps") return "Top range reached. Repeat it cleanly; reduce assistance only after comparable sessions confirm it.";
+  if (hitTop && trackingType === "weighted-reps") return "Top range reached. Repeat it at target RIR; add weight only after comparable sessions confirm it.";
   if (hitTop) return "Make the reps cleaner or add a small rep target next time; do not add load unless the routine calls for it.";
   return trackingType === "assistance-reps" ? "Keep assistance the same and add clean reps next time." : "Keep the same load/variation and add clean reps next time.";
 }
@@ -574,6 +587,190 @@ export function previousExercisePerformance(logs: WorkoutLog[], currentDate: str
     .at(-1);
 }
 
+export function previousSessionNotes(exerciseLog: ExerciseLog, workout?: WorkoutLog): string[] {
+  const notes = [
+    exerciseLog.notes,
+    ...exerciseLog.sets.map((set) => set.notes),
+    exerciseLog.cardio?.intensityNotes,
+    workout?.notes,
+  ];
+  return Array.from(new Set(notes.map((note) => note?.trim()).filter((note): note is string => Boolean(note))));
+}
+
+export type NextSessionRecommendationKind = "insufficient" | "hold" | "add-rep" | "add-load" | "reduce-assistance" | "add-time";
+
+export interface NextSessionRecommendation {
+  kind: NextSessionRecommendationKind;
+  title: string;
+  detail: string;
+  evidence: string;
+}
+
+function targetRirRange(target: string): { min: number; max: number } | null {
+  const values = [...target.matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+  if (!values.length) return null;
+  return { min: Math.min(...values), max: Math.max(...values) };
+}
+
+function completedPlannedSets(log: ExerciseLog, exercise: Exercise): SetLog[] {
+  if (log.skipped) return [];
+  const sets = log.sets.filter((set) => set.completed && setHasRecordedPerformance(set, exercise));
+  return sets.length === (exercise.sets ?? 0) ? sets : [];
+}
+
+function repTargetForRecommendation(exercise: Exercise): number | null {
+  return topRepTarget(exercise.reps ?? exercise.seconds);
+}
+
+function repsForProgression(set: SetLog, exercise: Exercise): number {
+  if (trackingTypeForExercise(exercise) === "timed") return validSecondValue(set.seconds);
+  if (exercise.unilateral) {
+    const left = validRepValue(set.leftReps);
+    const right = validRepValue(set.rightReps);
+    if (left && right) return Math.min(left, right);
+  }
+  return validRepValue(set.reps);
+}
+
+function sessionMeetsTopRangeAndRir(log: ExerciseLog, exercise: Exercise, weekInCycle?: number): boolean {
+  const top = repTargetForRecommendation(exercise);
+  const sets = completedPlannedSets(log, exercise);
+  if (!top || !sets.length) return false;
+  return sets.every((set) => {
+    if (repsForProgression(set, exercise) < top) return false;
+    if (!rirRequiredForExercise(exercise)) return true;
+    const range = targetRirRange(targetRIRForSet(exercise, weekInCycle, set.setNumber));
+    const actual = numericValue(set.rir);
+    return !!range && validRirValue(set.rir) && actual >= range.min && actual <= range.max;
+  });
+}
+
+function sessionLoadSignature(log: ExerciseLog, exercise: Exercise): string {
+  if (!shouldShowLoadInput(exercise)) return "no-load";
+  return completedPlannedSets(log, exercise).map((set) => validLoadValue(set.weight).toFixed(2)).join("|");
+}
+
+export function nextSessionRecommendation(
+  logs: WorkoutLog[],
+  currentDate: string,
+  exercise: Exercise,
+): NextSessionRecommendation {
+  const sessions = exerciseSessions(logs, exercise).filter((session) => session.workout.date < currentDate);
+  const latest = sessions.at(-1);
+  if (!latest) {
+    return {
+      kind: "insufficient",
+      title: "Build a confirmed baseline",
+      detail: "Log the planned working sets cleanly before the app suggests progression.",
+      evidence: "No confirmed comparable prior session.",
+    };
+  }
+
+  const latestSets = completedPlannedSets(latest.exerciseLog, exercise);
+  const noteText = previousSessionNotes(latest.exerciseLog, latest.workout).join(" ");
+  if (!latestSets.length) {
+    return {
+      kind: "insufficient",
+      title: "Not enough comparable work",
+      detail: "Repeat the planned sets before changing load or volume.",
+      evidence: `Latest confirmed session: ${latest.workout.date}.`,
+    };
+  }
+  if (containsPainOrRegression(noteText)) {
+    return {
+      kind: "hold",
+      title: "Hold steady",
+      detail: "Keep the planned work conservative and resolve the logged pain or regression signal before progressing.",
+      evidence: `Safety note found in the ${latest.workout.date} session.`,
+    };
+  }
+
+  const trackingType = trackingTypeForExercise(exercise);
+  if (trackingType === "cardio" || trackingType === "rest-checkin") {
+    return {
+      kind: "hold",
+      title: "Keep it easy",
+      detail: "Follow the programmed conversational intensity; this is not a strength-progression target.",
+      evidence: `Based on the ${latest.workout.date} session.`,
+    };
+  }
+
+  const missingRequiredRir = rirRequiredForExercise(exercise) && latestSets.some((set) => !validRirValue(set.rir));
+  if (missingRequiredRir) {
+    return {
+      kind: "insufficient",
+      title: "RIR evidence is incomplete",
+      detail: "Keep the current setup. Log actual RIR on the planned sets before changing load or difficulty.",
+      evidence: `The ${latest.workout.date} session is usable as history, but not enough for progression advice.`,
+    };
+  }
+
+  const tooHard = rirRequiredForExercise(exercise) && latestSets.some((set) => {
+    const range = targetRirRange(targetRIRForSet(exercise, latest.workout.weekInCycle, set.setNumber));
+    return !!range && validRirValue(set.rir) && numericValue(set.rir) < range.min;
+  });
+  if (tooHard) {
+    return {
+      kind: "hold",
+      title: "Hold the current difficulty",
+      detail: "The last session pushed past the target RIR. Match clean reps without adding load or sets.",
+      evidence: `Target-RIR check from ${latest.workout.date}.`,
+    };
+  }
+
+  const hitTop = sessionMeetsTopRangeAndRir(latest.exerciseLog, exercise, latest.workout.weekInCycle);
+  const previous = sessions.at(-2);
+  const repeatedTop = !!previous &&
+    sessionMeetsTopRangeAndRir(previous.exerciseLog, exercise, previous.workout.weekInCycle) &&
+    sessionLoadSignature(previous.exerciseLog, exercise) === sessionLoadSignature(latest.exerciseLog, exercise);
+
+  if (trackingType === "weighted-reps" && hitTop && repeatedTop) {
+    return {
+      kind: "add-load",
+      title: "Ready for a small load increase",
+      detail: "Two comparable sessions reached the full top range at target RIR. Add the smallest practical load and keep the same planned sets.",
+      evidence: `Confirmed on ${previous!.workout.date} and ${latest.workout.date}.`,
+    };
+  }
+  if (trackingType === "assistance-reps" && hitTop && repeatedTop) {
+    return {
+      kind: "reduce-assistance",
+      title: "Reduce assistance slightly",
+      detail: "Reps were stable at the top range twice. Use slightly less assistance without changing the planned set count.",
+      evidence: `Confirmed on ${previous!.workout.date} and ${latest.workout.date}.`,
+    };
+  }
+  if (hitTop) {
+    return {
+      kind: "hold",
+      title: "Confirm it once more",
+      detail: trackingType === "weighted-reps"
+        ? "Repeat this load at the top range and target RIR before increasing weight."
+        : "Repeat the same clean performance before making the variation harder.",
+      evidence: `One qualifying session on ${latest.workout.date}.`,
+    };
+  }
+
+  const top = repTargetForRecommendation(exercise);
+  const firstSetBelowTop = top ? latestSets.find((set) => repsForProgression(set, exercise) < top) : undefined;
+  if (trackingType === "timed") {
+    return {
+      kind: "add-time",
+      title: "Add controlled time",
+      detail: firstSetBelowTop ? `Try one more controlled second on set ${firstSetBelowTop.setNumber}. Stop when position breaks.` : "Match the hold with cleaner control.",
+      evidence: `Based on ${latest.workout.date}; no extra sets added.`,
+    };
+  }
+  return {
+    kind: "add-rep",
+    title: "Add one clean rep",
+    detail: firstSetBelowTop
+      ? `Try +1 rep on set ${firstSetBelowTop.setNumber} at the same ${trackingType === "assistance-reps" ? "assistance" : "load or variation"}. Keep the planned set count.`
+      : "Match the current setup and improve one clean rep before changing difficulty.",
+    evidence: `Based on the confirmed ${latest.workout.date} session.`,
+  };
+}
+
 export function compareLastTwoExerciseSessions(logs: WorkoutLog[], exerciseName: string): "Improved" | "Held steady" | "Regressed" | "New" {
   const sessions = exerciseSessions(logs, exerciseName);
   if (sessions.length < 2) return "New";
@@ -595,14 +792,17 @@ export function compareLastTwoExerciseSessions(logs: WorkoutLog[], exerciseName:
 }
 
 export function totalRepsForExerciseLog(log: ExerciseLog, exercise?: Exercise): number {
+  if (log.skipped) return 0;
   return log.sets.filter((set) => set.completed).reduce((sum, set) => sum + (trackingTypeForExercise(exercise) === "timed" ? 0 : repsForSet(set, exercise)), 0);
 }
 
 export function totalSecondsForExerciseLog(log: ExerciseLog): number {
+  if (log.skipped) return 0;
   return log.sets.filter((set) => set.completed).reduce((sum, set) => sum + validSecondValue(set.seconds), 0);
 }
 
 export function bestSetReps(log: ExerciseLog, exercise?: Exercise): number {
+  if (log.skipped) return 0;
   return Math.max(0, ...log.sets.filter((set) => set.completed).map((set) => {
     if (exercise?.unilateral) {
       const left = validRepValue(set.leftReps);
@@ -615,10 +815,12 @@ export function bestSetReps(log: ExerciseLog, exercise?: Exercise): number {
 }
 
 export function bestTimedSet(log: ExerciseLog): number {
+  if (log.skipped) return 0;
   return Math.max(0, ...log.sets.filter((set) => set.completed).map((set) => validSecondValue(set.seconds)));
 }
 
 export function bestAssistance(log: ExerciseLog): number {
+  if (log.skipped) return 0;
   const values = log.sets.filter((set) => set.completed).map((set) => validLoadValue(set.weight)).filter(Boolean);
   return values.length ? Math.min(...values) : 0;
 }

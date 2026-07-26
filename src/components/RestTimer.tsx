@@ -14,7 +14,42 @@ export function parseRestSeconds(rest?: string): number {
 export interface RestTimerState {
   endsAt: number;
   total: number;
+  preset: number;
   exerciseName: string;
+}
+
+let restTimerAudioContext: AudioContext | null = null;
+
+export function primeRestTimerAudio(): void {
+  try {
+    restTimerAudioContext ??= new AudioContext();
+    void restTimerAudioContext.resume();
+  } catch {
+    // Audio is optional; the visual timer and vibration still work.
+  }
+}
+
+function playRestTimerChime(): void {
+  try {
+    restTimerAudioContext ??= new AudioContext();
+    const context = restTimerAudioContext;
+    void context.resume();
+    const start = context.currentTime;
+    [523.25, 659.25].forEach((frequency, index) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, start + index * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.035, start + index * 0.12 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + index * 0.12 + 0.28);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(start + index * 0.12);
+      oscillator.stop(start + index * 0.12 + 0.3);
+    });
+  } catch {
+    // Some mobile browsers block audio until a user gesture; stay silent.
+  }
 }
 
 function formatClock(seconds: number): string {
@@ -26,12 +61,18 @@ function formatClock(seconds: number): string {
 export function RestTimer({
   timer,
   vibrateOnDone,
-  onExtend,
+  soundOnDone,
+  onAdjust,
+  onReset,
+  onToggleSound,
   onDismiss,
 }: {
   timer: RestTimerState;
   vibrateOnDone: boolean;
-  onExtend: () => void;
+  soundOnDone: boolean;
+  onAdjust: (seconds: number) => void;
+  onReset: () => void;
+  onToggleSound: () => void;
   onDismiss: () => void;
 }) {
   // The 1 Hz tick lives here so the logger tree doesn't re-render every second.
@@ -50,7 +91,8 @@ export function RestTimer({
     if (!done || vibratedForRef.current === timer.endsAt) return;
     vibratedForRef.current = timer.endsAt;
     if (vibrateOnDone) navigator.vibrate?.([180, 90, 180]);
-  }, [done, timer.endsAt, vibrateOnDone]);
+    if (soundOnDone) playRestTimerChime();
+  }, [done, timer.endsAt, vibrateOnDone, soundOnDone]);
 
   const progress = timer.total > 0 ? Math.min(100, Math.max(0, ((timer.total - remaining) / timer.total) * 100)) : 100;
 
@@ -63,8 +105,16 @@ export function RestTimer({
         <span>{done ? "Rest complete" : "Resting"}</span>
         <strong>{done ? "Next set — stay tight" : `After ${timer.exerciseName}`}</strong>
       </div>
-      {!done && <button type="button" onClick={onExtend}>+30s</button>}
-      <button type="button" onClick={onDismiss}>{done ? "Done" : "Skip"}</button>
+      <details className="rest-timer-controls">
+        <summary aria-label="Rest timer controls">Controls</summary>
+        <div>
+          <button type="button" onClick={onReset}>{done ? "Start" : "Reset"}</button>
+          <button type="button" onClick={() => onAdjust(-30)} disabled={remaining <= 30}>-30s</button>
+          <button type="button" onClick={() => onAdjust(30)}>+30s</button>
+          <button type="button" onClick={onToggleSound}>Sound {soundOnDone ? "on" : "off"}</button>
+          <button type="button" onClick={onDismiss}>Dismiss</button>
+        </div>
+      </details>
     </div>
   );
 }

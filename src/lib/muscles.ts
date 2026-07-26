@@ -95,6 +95,7 @@ export function calculateMuscleProgress(
 
   canonicalCompletedLogs(data.workoutLogs, fromDate, toDate).forEach((log) => {
     log.exerciseLogs.forEach((exerciseLog) => {
+      if (exerciseLog.skipped) return;
       const exercise = findExercise(exerciseLog.exerciseId);
       if (!exercise?.muscleGroups?.length) return;
       const completedSets = exerciseLog.sets.filter((set) => set.completed).length;
@@ -147,6 +148,7 @@ export function calculateMuscleProgress(
 export function musclesForWorkout(log: WorkoutLog): MuscleGroup[] {
   const groups = new Set<MuscleGroup>();
   log.exerciseLogs.forEach((exerciseLog) => {
+    if (exerciseLog.skipped) return;
     const exercise = findExercise(exerciseLog.exerciseId);
     if (!exerciseLog.completed && !exerciseLog.sets.some((set) => set.completed)) return;
     exercise?.muscleGroups?.forEach((group) => groups.add(group));

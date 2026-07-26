@@ -189,6 +189,9 @@ export interface SetLog {
 export interface ExerciseLog {
   id: string;
   exerciseId: string;
+  skipped?: boolean;
+  skippedAt?: string;
+  skipReason?: string;
   performedExerciseName?: string;
   replacementForExerciseId?: string;
   replacementReason?: string;
