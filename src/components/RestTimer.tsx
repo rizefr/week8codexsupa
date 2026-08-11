@@ -20,6 +20,12 @@ export interface RestTimerState {
 
 let restTimerAudioContext: AudioContext | null = null;
 
+export const REST_TIMER_ALARM_PATTERN = [
+  { frequency: 784, start: 0, duration: 0.24, gain: 0.08 },
+  { frequency: 988, start: 0.27, duration: 0.24, gain: 0.09 },
+  { frequency: 784, start: 0.56, duration: 0.34, gain: 0.08 },
+] as const;
+
 export function primeRestTimerAudio(): void {
   try {
     restTimerAudioContext ??= new AudioContext();
@@ -35,17 +41,17 @@ function playRestTimerChime(): void {
     const context = restTimerAudioContext;
     void context.resume();
     const start = context.currentTime;
-    [523.25, 659.25].forEach((frequency, index) => {
+    REST_TIMER_ALARM_PATTERN.forEach((pulse, index) => {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = frequency;
-      gain.gain.setValueAtTime(0.0001, start + index * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.035, start + index * 0.12 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + index * 0.12 + 0.28);
+      oscillator.type = index === REST_TIMER_ALARM_PATTERN.length - 1 ? "sine" : "triangle";
+      oscillator.frequency.value = pulse.frequency;
+      gain.gain.setValueAtTime(0.0001, start + pulse.start);
+      gain.gain.exponentialRampToValueAtTime(pulse.gain, start + pulse.start + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + pulse.start + pulse.duration);
       oscillator.connect(gain).connect(context.destination);
-      oscillator.start(start + index * 0.12);
-      oscillator.stop(start + index * 0.12 + 0.3);
+      oscillator.start(start + pulse.start);
+      oscillator.stop(start + pulse.start + pulse.duration + 0.02);
     });
   } catch {
     // Some mobile browsers block audio until a user gesture; stay silent.
@@ -81,7 +87,14 @@ export function RestTimer({
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(interval);
+    const refreshAfterBackground = () => setNow(Date.now());
+    document.addEventListener("visibilitychange", refreshAfterBackground);
+    window.addEventListener("pageshow", refreshAfterBackground);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshAfterBackground);
+      window.removeEventListener("pageshow", refreshAfterBackground);
+    };
   }, []);
 
   const remaining = Math.max(0, Math.ceil((timer.endsAt - now) / 1000));

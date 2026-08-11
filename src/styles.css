@@ -2200,6 +2200,250 @@ tr:last-child td {
   background: var(--amber-a08);
 }
 
+.skip-reason {
+  margin-top: 0.45rem;
+  color: var(--muted-strong);
+  font-size: 0.84rem;
+}
+
+.skip-confirmation {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--amber-a38);
+  border-radius: var(--radius-sm);
+  background: var(--amber-a08);
+}
+
+.skip-confirmation p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 0.82rem;
+}
+
+.skip-confirmation label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted-strong);
+  font-size: 0.78rem;
+}
+
+.skip-confirmation > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.history-flag-note {
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(115, 167, 255, 0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(115, 167, 255, 0.07);
+  color: var(--muted-strong);
+  font-size: 0.82rem;
+}
+
+.next-workout-briefing {
+  display: grid;
+  gap: 0.9rem;
+  border-color: rgba(115, 167, 255, 0.24);
+  background: linear-gradient(145deg, rgba(115, 167, 255, 0.08), rgba(255, 255, 255, 0.025));
+}
+
+.next-workout-briefing.compact {
+  padding: 0.9rem;
+}
+
+.next-workout-briefing .section-heading {
+  align-items: flex-start;
+}
+
+.next-workout-briefing .section-heading p:last-child {
+  margin: 0.35rem 0 0;
+  max-width: 58ch;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.briefing-status {
+  flex: 0 0 auto;
+  max-width: min(100%, 17rem);
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.briefing-status.watch,
+.briefing-status.deload {
+  border-color: var(--amber-a38);
+  color: #ffe7b5;
+  background: var(--amber-a08);
+}
+
+.deload-guidance {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.8rem;
+  border: 1px solid var(--amber-a20);
+  border-radius: var(--radius-md);
+  background: var(--amber-a08);
+}
+
+.deload-guidance p,
+.briefing-tip p,
+.briefing-tip small,
+.short-on-time-list p,
+.short-on-time-list small {
+  margin: 0;
+}
+
+.briefing-evidence-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.briefing-evidence-chips span {
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--amber-a20);
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.14);
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+}
+
+.briefing-tip-list,
+.short-on-time-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.briefing-tip,
+.short-on-time-list article {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.briefing-tip small,
+.short-on-time-list small {
+  color: var(--muted);
+}
+
+.briefing-tip.progress { border-color: var(--green-a38); }
+.briefing-tip.warning { border-color: var(--amber-a38); }
+.briefing-tip.hold { border-color: var(--blue-a20); }
+
+.short-on-time-disclosure,
+.exercise-flag-controls {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+  overflow: clip;
+}
+
+.short-on-time-disclosure > summary,
+.exercise-flag-controls > summary {
+  min-height: 44px;
+  padding: 0.7rem;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.short-on-time-disclosure[open] > summary,
+.exercise-flag-controls[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.short-on-time-disclosure > :not(summary),
+.exercise-flag-controls > :not(summary) {
+  margin: 0.7rem;
+}
+
+.exercise-flag-controls > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.exercise-flag-controls > summary span {
+  color: var(--amber);
+  font-size: 0.72rem;
+}
+
+.flag-helper {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.flag-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.flag-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.flag-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
+}
+
+.flag-fields label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted-strong);
+  font-size: 0.78rem;
+}
+
+.flag-note-field {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 760px) {
+  .next-workout-briefing .section-heading {
+    align-items: stretch;
+  }
+
+  .briefing-status {
+    align-self: start;
+    text-align: left;
+  }
+
+  .flag-toggle-grid,
+  .flag-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .flag-note-field {
+    grid-column: auto;
+  }
+}
+
 .history-skip-note {
   margin-top: 0.65rem;
   padding: 0.55rem 0.7rem;

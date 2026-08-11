@@ -37,6 +37,7 @@ import {
   BodyWeightLog,
   DayKey,
   Exercise,
+  ExerciseFlag,
   ExerciseLog,
   GamificationSettings,
   MuscleGroup,
@@ -134,6 +135,7 @@ import { calculateMuscleProgress, muscleGroupOrder, muscleLabels, MuscleProgress
 import { parseRestSeconds, primeRestTimerAudio, RestTimer, RestTimerState } from "./components/RestTimer";
 import { ToastItem, ToastStack } from "./components/Toasts";
 import { buildBodyCompositionSummary, buildDashboardCoachSummary, buildExerciseHelp, buildNextBestActionCue, buildTrendDirection, buildWorkoutCoachSummary } from "./lib/coach";
+import { buildNextWorkoutBriefing, NextWorkoutBriefing } from "./lib/readiness";
 
 type Page = "dashboard" | "today" | "routine" | "logger" | "recap" | "progress" | "weight" | "history" | "settings";
 type SaveState = "idle" | "saving" | "cloud" | "local" | "offline" | "syncIssue" | "notSignedIn";
@@ -1587,6 +1589,7 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
   const workout = workoutDays[dayKey];
   const log = todayLog;
   const warmupSummary = log ? warmupCompletionSummary(log) : warmupCompletionSummary({ dayKey });
+  const briefing = buildNextWorkoutBriefing(data, today, dayKey);
   return (
     <div className="content-stack">
       <section className="panel today-panel">
@@ -1605,6 +1608,7 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
           {log?.status === "draft" ? "Continue Workout" : log?.status === "completed" ? "Open Completed Log" : "Start Workout"}
         </button>
       </section>
+      {isTrainingDay(dayKey) && <NextWorkoutBriefingPanel briefing={briefing} />}
       <WarmupQuickPanel
         title={isTrainingDay(dayKey) ? "Warm-Up Available · 5-8 min" : "Optional posture routine"}
         summary={warmupSummary}
@@ -1624,6 +1628,59 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
       )}
       <WorkoutDayDetail dayKey={dayKey} compact={false} />
     </div>
+  );
+}
+
+function NextWorkoutBriefingPanel({ briefing, compact = false }: { briefing: NextWorkoutBriefing; compact?: boolean }) {
+  const deload = briefing.deload;
+  return (
+    <section className={classNames("panel next-workout-briefing", compact && "compact", `deload-${deload.status}`)}>
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Before you train</p>
+          <h3>Next-workout briefing</h3>
+          <p>Read-only guidance from confirmed prior sessions. Nothing here fills or changes your log.</p>
+        </div>
+        <span className={classNames("briefing-status", deload.status)}>{deload.title}</span>
+      </div>
+      {(deload.status === "deload" || deload.status === "watch") && (
+        <div className="deload-guidance">
+          <strong>{deload.summary}</strong>
+          <p>{deload.recommendation}</p>
+          {!!deload.signals.length && (
+            <div className="briefing-evidence-chips">
+              {deload.signals.slice(0, 3).map((signal) => <span key={`${signal.kind}-${signal.evidence}`}>{signal.summary}</span>)}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="briefing-tip-list">
+        {briefing.tips.map((tip) => (
+          <article key={`${tip.exerciseId ?? "day"}-${tip.title}`} className={classNames("briefing-tip", tip.tone)}>
+            <strong>{tip.title}</strong>
+            <p>{tip.detail}</p>
+            <small>{tip.evidence}</small>
+          </article>
+        ))}
+      </div>
+      <details className="short-on-time-disclosure">
+        <summary>Short on time?</summary>
+        {briefing.shortOnTime.length ? (
+          <div className="short-on-time-list">
+            <p>Optional only. Keep the main lifts and never remove work silently.</p>
+            {briefing.shortOnTime.map((option) => (
+              <article key={option.exerciseId}>
+                <strong>{option.title}</strong>
+                <span>{option.preferredAction}</span>
+                <small>{option.rationale} · {option.sourceRule}</small>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="muted-copy">The plan does not name a whole-exercise cut for this day. Keep the scheduled work; use the exercise skip only when genuinely necessary.</p>
+        )}
+      </details>
+    </section>
   );
 }
 
@@ -2039,6 +2096,7 @@ function LoggerPage({
   const loggingQuality = loggingQualityForWorkout(log);
   const prCount = gamification.prs.filter((pr) => pr.workoutId === log.id).length;
   const possibleXP = availableXPForDay(log.dayKey);
+  const briefing = buildNextWorkoutBriefing(data, log.date, log.dayKey);
   const handleSetCompleted = (exercise: Exercise) => {
     if (log.status !== "draft") return;
     onStartRest(exercise);
@@ -2098,6 +2156,8 @@ function LoggerPage({
           </button>
         </div>
       </section>
+
+      {log.status === "draft" && isTrainingDay(log.dayKey) && <NextWorkoutBriefingPanel briefing={briefing} compact />}
 
       {gamification.settings.enabled && (
         <div className="logger-game-strip">
@@ -2564,15 +2624,38 @@ function LogExerciseCard({
   const cardio = workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseLog.exerciseId);
   const previous = exercise ? previousExercisePerformance(allLogs, log.date, exercise) : undefined;
   const itemName = exerciseLog.performedExerciseName ?? exercise?.name ?? cardio?.name ?? "Workout item";
-  const skipExercise = () => {
-    if (log.status !== "draft") return;
-    const hasEnteredData = exerciseLog.sets.some((set) => set.completed || set.reps || set.leftReps || set.rightReps || set.seconds || set.weight) || !!exerciseLog.cardio?.duration;
-    const message = hasEnteredData
-      ? `Skip ${itemName} for today? Existing entries stay in this log but will not count toward completion, volume, PRs, trends, or progression while skipped.`
-      : `Skip ${itemName} for today? It will remain incomplete and will not count toward volume, PRs, trends, progression, or XP.`;
-    if (!window.confirm(message)) return;
-    onChange({ ...exerciseLog, skipped: true, skippedAt: new Date().toISOString(), completed: false });
+  const hasEnteredData = exerciseLog.sets.some((set) => set.completed || set.reps || set.leftReps || set.rightReps || set.seconds || set.weight) || !!exerciseLog.cardio?.duration;
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
+  const [skipReasonDraft, setSkipReasonDraft] = useState(hasEnteredData ? "Stopped this exercise for today" : "Short on time");
+  const confirmSkip = () => {
+    if (log.status !== "draft" || !skipReasonDraft.trim()) return;
+    onChange({
+      ...exerciseLog,
+      skipped: true,
+      skippedAt: new Date().toISOString(),
+      skipReason: skipReasonDraft.trim(),
+      completed: false,
+    });
+    setSkipConfirmOpen(false);
   };
+  const skipConfirmation = skipConfirmOpen ? (
+    <div className="skip-confirmation" role="group" aria-label={`Confirm skipping ${itemName}`}>
+      <strong>Skip {itemName} for this workout?</strong>
+      <p>
+        {hasEnteredData
+          ? "Existing entries stay saved, but this exercise will not count toward completion, volume, PRs, trends, progression, or XP while skipped."
+          : "It stays visibly incomplete and will not count toward completion, volume, PRs, trends, progression, or XP."}
+      </p>
+      <label>
+        Reason
+        <input value={skipReasonDraft} onChange={(event) => setSkipReasonDraft(event.target.value)} placeholder="Short on time, joint issue, equipment..." />
+      </label>
+      <div>
+        <button type="button" className="mini-action danger" disabled={!skipReasonDraft.trim()} onClick={confirmSkip}>Confirm skip</button>
+        <button type="button" className="mini-action" onClick={() => setSkipConfirmOpen(false)}>Keep planned</button>
+      </div>
+    </div>
+  ) : null;
   const restoreExercise = () => {
     const { skipped, skippedAt, skipReason, ...rest } = exerciseLog;
     onChange(rest);
@@ -2586,6 +2669,7 @@ function LogExerciseCard({
             <p className="eyebrow">Skipped for this workout only</p>
             <h3>{itemName}</h3>
             <p>Not completed. It contributes no volume, PR, trend, progression, or XP credit.</p>
+            {exerciseLog.skipReason && <p className="skip-reason">Reason: {exerciseLog.skipReason}</p>}
           </div>
           <span className="completion-state skipped">Skipped</span>
         </div>
@@ -2659,9 +2743,11 @@ function LogExerciseCard({
         {log.status === "draft" && (
           <details className="exercise-options">
             <summary>Exercise options</summary>
-            <button type="button" className="mini-action danger" onClick={skipExercise}>Skip cardio today</button>
+            <button type="button" className="mini-action danger" onClick={() => setSkipConfirmOpen(true)}>Skip cardio today</button>
           </details>
         )}
+        {skipConfirmation}
+        <ExerciseFlagControls exerciseLog={exerciseLog} onChange={onChange} readOnly={log.status !== "draft"} />
         <div className="input-grid">
           <NumberField
             label="Duration"
@@ -2785,10 +2871,12 @@ function LogExerciseCard({
                 <Timer size={15} /> Start rest timer
               </button>
             )}
-            <button type="button" className="mini-action danger" onClick={skipExercise}>Skip exercise today</button>
+            <button type="button" className="mini-action danger" onClick={() => setSkipConfirmOpen(true)}>Skip exercise today</button>
           </div>
         </details>
       )}
+      {skipConfirmation}
+      <ExerciseFlagControls exerciseLog={exerciseLog} onChange={onChange} readOnly={log.status !== "draft"} />
       {previous && (
         <div className="previous-box">
           <strong>Previous:</strong> {formatDate(previous.workout.date)} ·{" "}
@@ -2895,6 +2983,109 @@ function LogExerciseCard({
       </label>
       <div className="advice-line">{progressionAdvice(exerciseLog)}</div>
     </section>
+  );
+}
+
+function ExerciseFlagControls({
+  exerciseLog,
+  onChange,
+  readOnly,
+}: {
+  exerciseLog: ExerciseLog;
+  onChange: (log: ExerciseLog) => void;
+  readOnly: boolean;
+}) {
+  const flags = exerciseLog.flags ?? [];
+  const joint = flags.find((flag) => flag.kind === "joint-discomfort");
+  const form = flags.find((flag) => flag.kind === "form-breakdown");
+  const updateFlag = (
+    kind: ExerciseFlag["kind"],
+    enabled: boolean,
+    patch: Partial<ExerciseFlag> = {},
+  ) => {
+    const existing = flags.find((flag) => flag.kind === kind);
+    const others = flags.filter((flag) => flag.kind !== kind);
+    const nextFlags = enabled
+      ? [...others, {
+          id: existing?.id ?? createId(`flag-${kind}`),
+          kind,
+          severity: patch.severity ?? existing?.severity ?? "notice",
+          area: patch.area ?? existing?.area,
+          note: patch.note ?? existing?.note,
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
+        }]
+      : others;
+    onChange({ ...exerciseLog, flags: nextFlags.length ? nextFlags : undefined });
+  };
+
+  if (readOnly && !flags.length) return null;
+
+  return (
+    <details className="exercise-flag-controls" open={readOnly && flags.length > 0}>
+      <summary>
+        Joint / form check
+        {!!flags.length && <span>{flags.length} flagged</span>}
+      </summary>
+      <p className="flag-helper">Record only what you actually noticed. Flags inform the next briefing; they do not diagnose an injury.</p>
+      <div className="flag-toggle-grid">
+        <label className="flag-toggle-row">
+          <input
+            type="checkbox"
+            checked={!!joint}
+            disabled={readOnly}
+            onChange={(event) => updateFlag("joint-discomfort", event.target.checked)}
+          />
+          <span>Joint discomfort</span>
+        </label>
+        <label className="flag-toggle-row">
+          <input
+            type="checkbox"
+            checked={!!form}
+            disabled={readOnly}
+            onChange={(event) => updateFlag("form-breakdown", event.target.checked)}
+          />
+          <span>Form broke down</span>
+        </label>
+      </div>
+      {joint && (
+        <div className="flag-fields">
+          <label>
+            Area
+            <select disabled={readOnly} value={joint.area ?? "other"} onChange={(event) => updateFlag("joint-discomfort", true, { area: event.target.value })}>
+              {["shoulder", "elbow", "wrist", "lower back", "hip", "knee", "ankle", "other"].map((area) => <option key={area} value={area}>{area}</option>)}
+            </select>
+          </label>
+          <label>
+            Effect on training
+            <select disabled={readOnly} value={joint.severity} onChange={(event) => updateFlag("joint-discomfort", true, { severity: event.target.value as ExerciseFlag["severity"] })}>
+              <option value="notice">Noticed it</option>
+              <option value="limit">Limited the exercise</option>
+              <option value="stop">Stopped the exercise</option>
+            </select>
+          </label>
+          <label className="flag-note-field">
+            Optional detail
+            <input disabled={readOnly} value={joint.note ?? ""} onChange={(event) => updateFlag("joint-discomfort", true, { note: event.target.value })} placeholder="What did you feel?" />
+          </label>
+        </div>
+      )}
+      {form && (
+        <div className="flag-fields">
+          <label>
+            Effect on training
+            <select disabled={readOnly} value={form.severity} onChange={(event) => updateFlag("form-breakdown", true, { severity: event.target.value as ExerciseFlag["severity"] })}>
+              <option value="notice">One rep lost position</option>
+              <option value="limit">Repeated breakdown</option>
+              <option value="stop">Stopped the exercise</option>
+            </select>
+          </label>
+          <label className="flag-note-field">
+            Optional detail
+            <input disabled={readOnly} value={form.note ?? ""} onChange={(event) => updateFlag("form-breakdown", true, { note: event.target.value })} placeholder="What changed?" />
+          </label>
+        </div>
+      )}
+    </details>
   );
 }
 
@@ -3782,7 +3973,16 @@ function HistoryPage({ data, gamification, startWorkout }: { data: AppData; gami
                   )}
                   {log.exerciseLogs.some((item) => item.skipped) && (
                     <div className="history-skip-note">
-                      Skipped today: {log.exerciseLogs.filter((item) => item.skipped).map((item) => exerciseNameForId(item.exerciseId)).join(" · ")}
+                      Skipped today: {log.exerciseLogs.filter((item) => item.skipped).map((item) => (
+                        `${exerciseNameForId(item.exerciseId)}${item.skipReason ? ` (${item.skipReason})` : ""}`
+                      )).join(" · ")}
+                    </div>
+                  )}
+                  {log.exerciseLogs.some((item) => item.flags?.length) && (
+                    <div className="history-flag-note">
+                      Training flags: {log.exerciseLogs.filter((item) => item.flags?.length).map((item) => (
+                        `${exerciseNameForId(item.exerciseId)} · ${item.flags!.map((flag) => flag.kind === "joint-discomfort" ? `${flag.area ?? "joint"} discomfort` : "form breakdown").join(", ")}`
+                      )).join(" · ")}
                     </div>
                   )}
                   {log.status === "completed" && (

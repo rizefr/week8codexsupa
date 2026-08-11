@@ -12,6 +12,8 @@ export type ExerciseTrackingType = "weighted-reps" | "assistance-reps" | "bodywe
 export type ProgramPhase = "setup" | "growth" | "push";
 export type LogStatus = "draft" | "completed";
 export type ExerciseRiskLevel = "low" | "moderate" | "higher";
+export type ExerciseFlagKind = "joint-discomfort" | "form-breakdown";
+export type ExerciseFlagSeverity = "notice" | "limit" | "stop";
 export type ExerciseProgressionRule =
   | "add-reps-first"
   | "add-load-after-top-range"
@@ -186,12 +188,22 @@ export interface SetLog {
   completionOverride?: "incomplete";
 }
 
+export interface ExerciseFlag {
+  id: string;
+  kind: ExerciseFlagKind;
+  severity: ExerciseFlagSeverity;
+  area?: string;
+  note?: string;
+  createdAt: string;
+}
+
 export interface ExerciseLog {
   id: string;
   exerciseId: string;
   skipped?: boolean;
   skippedAt?: string;
   skipReason?: string;
+  flags?: ExerciseFlag[];
   performedExerciseName?: string;
   replacementForExerciseId?: string;
   replacementReason?: string;

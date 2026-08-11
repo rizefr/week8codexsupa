@@ -101,7 +101,8 @@ Key modules:
 - `src/lib/coach.ts`: exercise-specific feedback, exercise help, weekly focus, dashboard cues, body composition summary, trend direction, and next best action copy.
 - `src/lib/gamification.ts`: XP events, levels, streaks, execution score, daily activity, achievements, player status, quests, weekly challenge, PRs, baselines, result states, and workout recap.
 - `src/lib/muscles.ts`: muscle scoring, mastery states, muscle labels, weekly focus, and muscle-map detail data.
-- `src/components/RestTimer.tsx`: a non-blocking app-shell rest timer launched when valid reps/seconds are first recorded, with reset, +/-30 seconds, session mute, vibration, and a low-volume local chime.
+- `src/components/RestTimer.tsx`: a non-blocking app-shell rest timer launched when valid reps/seconds are first recorded, with reset, +/-30 seconds, session mute, vibration, and a short three-pulse local alarm.
+- `src/lib/readiness.ts`: plan-aligned short-on-time options, structured joint/form flag patterns, conservative deload assessment, and the read-only next-workout briefing.
 - `src/components/Toasts.tsx`: reduced-motion-safe, dismissible PR, badge, and level feedback.
 
 The game layer rewards correct execution:
@@ -159,6 +160,24 @@ Examples intentionally not matched:
 - `Chest-Supported Incline DB Row` vs `One-Arm DB Row`
 
 If no confirmed prior session exists, the UI should say `No confirmed previous session` rather than showing data from a different movement.
+
+## Next-Workout Readiness
+
+The next-workout briefing is derived and read-only. It never fills, completes, skips, or changes a workout. It combines strict comparable prior sessions, prior saved notes, explicit structured joint/form flags, and the routine's own recovery rules.
+
+- Short-on-time options are limited to the routine's existing `When To Reduce Volume` order. Main lifts are not silently removed.
+- One poor session does not trigger a deload recommendation.
+- A deload assessment needs at least three completed sessions and at least two independent routine-defined signals. With one supported signal, the app says to watch and hold progression.
+- Joint discomfort and form breakdown are recorded only when the user explicitly checks them or wrote an unambiguous historical note. Missing or reassuring notes are not interpreted as a problem.
+- A plan-aligned deload keeps the same exercises, halves sets, targets about RIR 3, avoids failure, and keeps cardio easy.
+
+RIR remains an imperfect self-estimate, so it is never the sole deload signal. This approach is consistent with RIR research showing useful reliability alongside estimation limitations and with evidence that stopping short of failure can better sustain work across sets:
+
+- https://pubmed.ncbi.nlm.nih.gov/36135029/
+- https://pubmed.ncbi.nlm.nih.gov/29204323/
+- https://pubmed.ncbi.nlm.nih.gov/34941608/
+
+The full feature/data dependency inventory and plan-change regression gate live in `TRAINING_PLAN_CHANGE_CHECKLIST.md`.
 
 ## PR And Result States
 

@@ -21,7 +21,13 @@ import {
   unlockAchievements,
 } from "../dist/src/lib/gamification.js";
 import { todayISO, toISODate } from "../dist/src/lib/date.js";
-import { parseRestSeconds } from "../dist/src/components/RestTimer.js";
+import { parseRestSeconds, REST_TIMER_ALARM_PATTERN } from "../dist/src/components/RestTimer.js";
+import {
+  assessDeloadNeed,
+  buildExerciseFlagPatterns,
+  buildNextWorkoutBriefing,
+  shortOnTimeGuidance,
+} from "../dist/src/lib/readiness.js";
 
 const exercises = Object.values(workoutDays).flatMap((day) => day.exercises);
 const byName = (name) => {
@@ -298,5 +304,88 @@ assert.equal(toISODate(new Date(2026, 0, 1, 23, 30)), "2026-01-01");
 assert.equal(parseRestSeconds("2-3 min"), 180);
 assert.equal(parseRestSeconds("60-90 sec after 4B"), 90);
 assert.equal(parseRestSeconds("As needed"), 0);
+
+// The completion sound must be meaningfully louder and more distinct than the
+// old two-note 0.035-gain chime without becoming a repeating background alarm.
+assert.ok(REST_TIMER_ALARM_PATTERN.length >= 3, "Rest completion uses a distinct alarm-style pulse pattern.");
+assert.ok(Math.max(...REST_TIMER_ALARM_PATTERN.map((pulse) => pulse.gain)) >= 0.07, "Rest completion is clearly audible at a normal device volume.");
+assert.ok(REST_TIMER_ALARM_PATTERN.reduce((sum, pulse) => sum + pulse.duration, 0) <= 1.5, "Rest completion stays brief and unobtrusive.");
+
+// Short-on-time guidance is plan-derived: it never removes a main lift or
+// fabricates three options when the reduce-volume table only supports one.
+const saturdayCuts = shortOnTimeGuidance("saturday");
+assert.ok(saturdayCuts.length >= 1 && saturdayCuts.length <= 3);
+assert.equal(saturdayCuts[0].exerciseId, "saturday-feet-elevated-push-up-or-db-squeeze-press");
+assert.ok(saturdayCuts.every((option) => /When To Reduce Volume/i.test(option.sourceRule)));
+assert.ok(saturdayCuts.every((option) => !/pull-up|rear-delt-row/i.test(option.exerciseId)));
+assert.deepEqual(shortOnTimeGuidance("monday"), [], "No plan-approved Monday cut should be invented.");
+assert.equal(shortOnTimeGuidance("tuesday")[0]?.exerciseId, "tuesday-incline-treadmill-walk");
+
+const flaggedPressLogs = [
+  logFor("2026-06-01", "Low-Incline DB Press", pressSetsAtTop("35")),
+  logFor("2026-06-08", "Low-Incline DB Press", pressSetsAtTop("35").map((item) => ({ ...item, reps: "9" }))),
+  logFor("2026-06-15", "Low-Incline DB Press", pressSetsAtTop("35").map((item) => ({ ...item, reps: "8" }))),
+];
+flaggedPressLogs[1].exerciseLogs[0].flags = [{
+  id: "flag-1",
+  kind: "joint-discomfort",
+  area: "shoulder",
+  severity: "limit",
+  note: "Stopped before it worsened.",
+  createdAt: "2026-06-08T12:00:00.000Z",
+}];
+flaggedPressLogs[2].exerciseLogs[0].flags = [{
+  id: "flag-2",
+  kind: "joint-discomfort",
+  area: "shoulder",
+  severity: "limit",
+  createdAt: "2026-06-15T12:00:00.000Z",
+}];
+
+const flagPatterns = buildExerciseFlagPatterns(flaggedPressLogs, "2026-06-22", "monday");
+assert.equal(flagPatterns[0]?.exerciseId, byName("Low-Incline DB Press").id);
+assert.equal(flagPatterns[0]?.kind, "joint-discomfort");
+assert.equal(flagPatterns[0]?.sessionCount, 2);
+assert.match(flagPatterns[0]?.summary ?? "", /shoulder/i);
+
+const reassuringNoteOnly = logFor("2026-06-18", "Low-Incline DB Press", pressSetsAtTop("35"), { notes: "Shoulder felt good and stable." });
+assert.deepEqual(
+  buildExerciseFlagPatterns([reassuringNoteOnly], "2026-06-22", "monday"),
+  [],
+  "Neutral or reassuring notes must not be converted into pain/form flags.",
+);
+
+assert.equal(assessDeloadNeed(flaggedPressLogs.slice(0, 1), "2026-06-22").status, "insufficient");
+assert.equal(
+  assessDeloadNeed(flaggedPressLogs.map((workout) => ({ ...workout, exerciseLogs: workout.exerciseLogs.map(({ flags, ...entry }) => entry) })), "2026-06-22").status,
+  "watch",
+  "Two same-setup declines are a watch signal, not enough by themselves to prescribe a deload.",
+);
+const deloadAssessment = assessDeloadNeed(flaggedPressLogs, "2026-06-22");
+assert.equal(deloadAssessment.status, "deload");
+assert.ok(deloadAssessment.signals.some((signal) => signal.kind === "performance-drop"));
+assert.ok(deloadAssessment.signals.some((signal) => signal.kind === "joint-discomfort"));
+assert.match(deloadAssessment.recommendation, /half/i);
+assert.match(deloadAssessment.recommendation, /RIR 3/i);
+
+const emptyBriefing = buildNextWorkoutBriefing(
+  { settings: { startDate: "2026-06-01" }, workoutLogs: [], bodyWeights: [] },
+  "2026-06-22",
+  "monday",
+);
+assert.equal(emptyBriefing.deload.status, "insufficient");
+assert.match(emptyBriefing.tips[0]?.evidence ?? "", /No confirmed comparable evidence/i);
+assert.equal(emptyBriefing.shortOnTime.length, 0);
+
+const flagsDecoratedLog = {
+  ...baseWarmupSafetyLog,
+  exerciseLogs: baseWarmupSafetyLog.exerciseLogs.map((entry) => ({
+    ...entry,
+    flags: [{ id: "form-1", kind: "form-breakdown", severity: "notice", note: "Last rep lost position.", createdAt: "2026-06-10T12:00:00.000Z" }],
+  })),
+};
+assert.equal(workoutVolume(flagsDecoratedLog), workoutVolume(baseWarmupSafetyLog), "Structured flags must not change volume.");
+assert.equal(completedSetCount(flagsDecoratedLog), completedSetCount(baseWarmupSafetyLog), "Structured flags must not change completed-set counts.");
+assert.equal(loggingQualityForWorkout(flagsDecoratedLog), loggingQualityForWorkout(baseWarmupSafetyLog), "Structured flags must not change logging quality.");
 
 console.log("Progress formatting regression checks passed.");
