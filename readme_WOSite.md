@@ -101,9 +101,11 @@ Key modules:
 - `src/lib/coach.ts`: exercise-specific feedback, exercise help, weekly focus, dashboard cues, body composition summary, trend direction, and next best action copy.
 - `src/lib/gamification.ts`: XP events, levels, streaks, execution score, daily activity, achievements, player status, quests, weekly challenge, PRs, baselines, result states, and workout recap.
 - `src/lib/muscles.ts`: muscle scoring, mastery states, muscle labels, weekly focus, and muscle-map detail data.
-- `src/components/RestTimer.tsx`: a non-blocking app-shell rest timer launched when valid reps/seconds are first recorded, with reset, +/-30 seconds, session mute, vibration, and a short three-pulse local alarm.
-- `src/lib/readiness.ts`: plan-aligned short-on-time options, structured joint/form flag patterns, conservative deload assessment, and the read-only next-workout briefing.
+- `src/components/RestTimer.tsx`: a non-blocking app-shell rest timer launched when valid reps/seconds are first recorded, with reset, +/-30 seconds, session mute, vibration, and a centered repeating alarm that stops only when dismissed.
+- `src/lib/readiness.ts`: ranked short-on-time options, structured joint/form flag patterns, conservative deload assessment, and the read-only next-workout briefing. Every training day has three ranked cuts plus an all-selected exercise checklist; applied cuts use the existing workout-only skip state and remain excluded from completion, volume, PRs, trends, progression, muscle scoring, and XP.
 - `src/components/Toasts.tsx`: reduced-motion-safe, dismissible PR, badge, and level feedback.
+
+Short-on-time rankings do not label an exercise universally "ineffective." They preserve the routine's priority exercises and unique muscle work, then rank redundant accessory volume by the cost of removing it from this exact week. The evidence basis includes the [2026 ACSM resistance-training position stand](https://pubmed.ncbi.nlm.nih.gov/41843416/), [exercise-order meta-analysis](https://pubmed.ncbi.nlm.nih.gov/32077380/), [weekly-volume and direct/indirect-set meta-regression](https://pubmed.ncbi.nlm.nih.gov/41343037/), and research on [adding single-joint work to multijoint programs](https://pubmed.ncbi.nlm.nih.gov/30662699/). These sources support prioritization and diminishing-return reasoning; they do not prove a universal ranking for every person.
 
 The game layer rewards correct execution:
 

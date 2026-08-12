@@ -16,7 +16,7 @@ Use this checklist whenever the 8-week routine or its exercise metadata changes.
 | Progression advice | Uses comparable completed sessions, rep range, load, and target RIR | strict session history, routine metadata |
 | Notes and training flags | Previous notes are disclosed; explicit joint/form flags inform briefings | exercise/workout notes, optional `ExerciseLog.flags` |
 | Deload guidance | Requires sufficient history and at least two independent plan-defined signals | completed history, comparable performance, explicit notes/flags |
-| Short-on-time guidance | Shows only cuts named by the routine's reduce-volume order | `src/data/routine.ts` rules mirrored in `src/lib/readiness.ts` |
+| Short-on-time guidance | Ranks three day-specific cuts, starts all exercises selected, and persists applied cuts as honest skipped work | routine priorities plus `src/lib/readiness.ts` evidence-based redundancy ranking |
 | PRs and baselines | First valid session is baseline; later strict improvements can be PRs | completed valid sets and strict history |
 | Trends and muscle map | Skip warm-ups and skipped exercises; use tracking-aware metrics | completed working sets, muscle metadata |
 | Gamification | Deterministic XP; display-only quests/challenges cannot be farmed | logs, weights, settings memory |
@@ -31,7 +31,7 @@ Use this checklist whenever the 8-week routine or its exercise metadata changes.
 - [ ] Add `comparisonAliases` only for truly equivalent names, never for a loose movement family.
 - [ ] Confirm tracking type, load label, unilateral behavior, set count, rep/seconds range, rest, target RIR, muscles, progression rule, PR eligibility, and superset metadata.
 - [ ] Update warm-up exercise links if an exercise ID changes.
-- [ ] Review short-on-time guidance against the plan's written reduce-volume order.
+- [ ] Review each day's three short-on-time cuts against routine priorities, weekly overlap, and current evidence; keep priority compounds out of the recommended list.
 - [ ] Review deload copy against the plan; do not add medical diagnosis or infer pain from missing data.
 - [ ] Preserve the old log shape and render missing new metadata defensively.
 
@@ -42,7 +42,8 @@ Use this checklist whenever the 8-week routine or its exercise metadata changes.
 - [ ] Create a draft, enter a partial set, close/reopen, and confirm the draft remains.
 - [ ] Verify weighted, assisted, bodyweight, timed, cardio, and unilateral inputs.
 - [ ] Confirm valid reps/seconds starts the rest timer once; reset and +/-30 seconds work.
-- [ ] Confirm the completion alarm is audible, respects mute/browser audio limits, and does not repeat in the background.
+- [ ] Confirm the completion alarm is audible, repeats while the completion dialog is visible, respects mute/browser audio limits, and stops immediately after Dismiss alarm.
+- [ ] Confirm every workout item starts selected, applied cuts gray and lock the corresponding cards, and re-selecting restores the original logged entries.
 - [ ] Skip an exercise, record a reason, restore it, and confirm entries are preserved.
 - [ ] Confirm skipped work is not counted as completed or included in volume, PRs, trends, muscle stimulus, or XP.
 - [ ] Add joint/form flags and confirm they do not alter set metrics.

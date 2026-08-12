@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { workoutDays } from "../dist/src/data/routine.js";
 import {
   completedSetCount,
+  createWorkoutLog,
   epleyE1RM,
   exerciseSessions,
   nextSessionRecommendation,
@@ -21,7 +22,7 @@ import {
   unlockAchievements,
 } from "../dist/src/lib/gamification.js";
 import { todayISO, toISODate } from "../dist/src/lib/date.js";
-import { parseRestSeconds, REST_TIMER_ALARM_PATTERN } from "../dist/src/components/RestTimer.js";
+import { parseRestSeconds, REST_TIMER_ALARM_PATTERN, REST_TIMER_REPEAT_MS } from "../dist/src/components/RestTimer.js";
 import {
   assessDeloadNeed,
   buildExerciseFlagPatterns,
@@ -305,21 +306,36 @@ assert.equal(parseRestSeconds("2-3 min"), 180);
 assert.equal(parseRestSeconds("60-90 sec after 4B"), 90);
 assert.equal(parseRestSeconds("As needed"), 0);
 
-// The completion sound must be meaningfully louder and more distinct than the
-// old two-note 0.035-gain chime without becoming a repeating background alarm.
-assert.ok(REST_TIMER_ALARM_PATTERN.length >= 3, "Rest completion uses a distinct alarm-style pulse pattern.");
-assert.ok(Math.max(...REST_TIMER_ALARM_PATTERN.map((pulse) => pulse.gain)) >= 0.07, "Rest completion is clearly audible at a normal device volume.");
-assert.ok(REST_TIMER_ALARM_PATTERN.reduce((sum, pulse) => sum + pulse.duration, 0) <= 1.5, "Rest completion stays brief and unobtrusive.");
+// The completion sound must be louder than the old chime and repeat at a sane
+// cadence until the user dismisses the alarm dialog.
+assert.ok(REST_TIMER_ALARM_PATTERN.length >= 4, "Rest completion uses a distinct alarm-style pulse pattern.");
+assert.ok(Math.max(...REST_TIMER_ALARM_PATTERN.map((pulse) => pulse.gain)) >= 0.15, "Rest completion is clearly audible at a normal device volume.");
+assert.ok(REST_TIMER_ALARM_PATTERN.reduce((sum, pulse) => sum + pulse.duration, 0) <= 1.5, "Each alarm cycle stays brief enough to avoid overlapping the next cycle.");
+assert.ok(REST_TIMER_REPEAT_MS >= 1500 && REST_TIMER_REPEAT_MS <= 3000, "Alarm repeats until dismissal without overlapping or waiting too long.");
 
-// Short-on-time guidance is plan-derived: it never removes a main lift or
-// fabricates three options when the reduce-volume table only supports one.
+// Every training day has three ordered, plan-specific cut options. The choices
+// must point to real items from that day and must not displace the priority
+// pull-up/rear-delt work on the Saturday specialization day.
+const trainingDays = ["monday", "tuesday", "wednesday", "friday", "saturday"];
+for (const dayKey of trainingDays) {
+  const cuts = shortOnTimeGuidance(dayKey);
+  assert.equal(cuts.length, 3, `${dayKey} should offer three ranked cuts.`);
+  assert.deepEqual(cuts.map((option) => option.rank), [1, 2, 3], `${dayKey} cut ranks must be stable.`);
+  assert.equal(new Set(cuts.map((option) => option.exerciseId)).size, 3, `${dayKey} cut exercises must be unique.`);
+  const plannedIds = new Set([
+    ...workoutDays[dayKey].exercises.map((exercise) => exercise.id),
+    ...(workoutDays[dayKey].cardio ?? []).map((cardio) => cardio.id),
+  ]);
+  assert.ok(cuts.every((option) => plannedIds.has(option.exerciseId)), `${dayKey} cuts must belong to that workout.`);
+}
 const saturdayCuts = shortOnTimeGuidance("saturday");
-assert.ok(saturdayCuts.length >= 1 && saturdayCuts.length <= 3);
 assert.equal(saturdayCuts[0].exerciseId, "saturday-feet-elevated-push-up-or-db-squeeze-press");
-assert.ok(saturdayCuts.every((option) => /When To Reduce Volume/i.test(option.sourceRule)));
 assert.ok(saturdayCuts.every((option) => !/pull-up|rear-delt-row/i.test(option.exerciseId)));
-assert.deepEqual(shortOnTimeGuidance("monday"), [], "No plan-approved Monday cut should be invented.");
+assert.equal(shortOnTimeGuidance("monday")[0]?.exerciseId, "monday-low-incline-db-squeeze-press");
 assert.equal(shortOnTimeGuidance("tuesday")[0]?.exerciseId, "tuesday-incline-treadmill-walk");
+
+const freshShortWorkout = createWorkoutLog("2026-06-22", { startDate: "2026-06-01", status: "active" }, "monday");
+assert.ok(freshShortWorkout.exerciseLogs.every((entry) => !entry.skipped), "Every planned exercise starts selected.");
 
 const flaggedPressLogs = [
   logFor("2026-06-01", "Low-Incline DB Press", pressSetsAtTop("35")),
@@ -375,7 +391,7 @@ const emptyBriefing = buildNextWorkoutBriefing(
 );
 assert.equal(emptyBriefing.deload.status, "insufficient");
 assert.match(emptyBriefing.tips[0]?.evidence ?? "", /No confirmed comparable evidence/i);
-assert.equal(emptyBriefing.shortOnTime.length, 0);
+assert.equal(emptyBriefing.shortOnTime.length, 3);
 
 const flagsDecoratedLog = {
   ...baseWarmupSafetyLog,

@@ -13,61 +13,148 @@ import {
 
 export interface ShortOnTimeOption {
   exerciseId: string;
+  rank: number;
   title: string;
   preferredAction: string;
   rationale: string;
   sourceRule: string;
 }
 
-// These entries are a direct UI interpretation of the routine's existing
-// "When To Reduce Volume" table. Main lifts are intentionally absent.
+// Ranked by the cost of removing the item from this specific 8-week routine,
+// not by claiming that an exercise is universally ineffective. The ranking
+// preserves each day's priority compounds and unique muscle work, then removes
+// redundant accessory volume. It combines the routine's reduce-volume order
+// with current resistance-training evidence on exercise priority, direct vs.
+// indirect sets, and diminishing returns from additional weekly volume.
 const shortOnTimeByDay: Partial<Record<DayKey, ShortOnTimeOption[]>> = {
+  monday: [
+    {
+      exerciseId: "monday-low-incline-db-squeeze-press",
+      rank: 1,
+      title: "Low-Incline DB Squeeze Press",
+      preferredAction: "First cut: skip the extra chest pump work.",
+      rationale: "Upper chest already receives the day's four priority press sets and more pressing later in the week.",
+      sourceRule: "Routine redundancy + weekly chest volume",
+    },
+    {
+      exerciseId: "monday-incline-db-curl",
+      rank: 2,
+      title: "Incline DB Curl",
+      preferredAction: "Second cut: keep the pull-ups and remove this direct curl slot.",
+      rationale: "Biceps still receive pull-up work plus dedicated Wednesday and Saturday curl volume.",
+      sourceRule: "Direct/indirect set overlap",
+    },
+    {
+      exerciseId: "monday-db-lateral-raise",
+      rank: 3,
+      title: "DB Lateral Raise",
+      preferredAction: "Third cut only when the session must be much shorter.",
+      rationale: "Side delts retain dedicated work Wednesday, Friday, and Saturday, but this cut costs more because delts are a program priority.",
+      sourceRule: "Weekly redundancy; higher tradeoff",
+    },
+  ],
   tuesday: [
     {
       exerciseId: "tuesday-incline-treadmill-walk",
+      rank: 1,
       title: "Easy incline walk",
       preferredAction: "Skip the post-lifting walk if the clock is tight.",
       rationale: "The plan removes Tuesday cardio before cutting the main lower-body work.",
       sourceRule: "When To Reduce Volume · Step 4",
     },
+    {
+      exerciseId: "tuesday-dead-bug",
+      rank: 2,
+      title: "Dead Bug",
+      preferredAction: "Second cut: keep the loaded lower-body work and reverse crunches.",
+      rationale: "Core already has direct work Tuesday, Friday, and Saturday; this is the least costly strength-item cut today.",
+      sourceRule: "Weekly core overlap",
+    },
+    {
+      exerciseId: "tuesday-hamstring-walkout",
+      rank: 3,
+      title: "Hamstring Walkout",
+      preferredAction: "Third cut only; keep the DB RDL as the priority hinge.",
+      rationale: "The RDL supplies the main progressive hamstring work. Removing this accessory is a larger compromise than cutting cardio or one core drill.",
+      sourceRule: "Primary hinge preserved; higher tradeoff",
+    },
+  ],
+  wednesday: [
+    {
+      exerciseId: "wednesday-cross-body-hammer-curl",
+      rank: 1,
+      title: "Cross-Body Hammer Curl",
+      preferredAction: "First cut: remove the extra elbow-flexor accessory.",
+      rationale: "Biceps and forearms retain pull-ups, incline curls, rows, and Saturday curl work.",
+      sourceRule: "Direct/indirect set overlap",
+    },
+    {
+      exerciseId: "wednesday-standing-db-shoulder-press",
+      rank: 2,
+      title: "Standing DB Shoulder Press",
+      preferredAction: "Second cut: preserve side- and rear-delt isolation first.",
+      rationale: "Front delts and triceps already receive substantial pressing Monday and Friday; side and rear delts are the more specific goals today.",
+      sourceRule: "Program goal specificity + pressing overlap",
+    },
+    {
+      exerciseId: "wednesday-standing-db-overhead-triceps-extension",
+      rank: 3,
+      title: "Standing DB Overhead Triceps Extension",
+      preferredAction: "Third cut only after the two more redundant slots.",
+      rationale: "Triceps retain press, dip, and extension work elsewhere, but this movement adds unique long-head emphasis, so the tradeoff is higher.",
+      sourceRule: "Weekly triceps overlap; higher tradeoff",
+    },
   ],
   friday: [
     {
-      exerciseId: "friday-assisted-dip-chest-triceps-bias",
-      title: "Assisted Dip",
-      preferredAction: "Trim one set first; skip only if the session still must end.",
-      rationale: "Keep the flat press, pull-up, and row. The plan reduces dip/pullover volume later in the cut order.",
+      exerciseId: "friday-db-pullover",
+      rank: 1,
+      title: "DB Pullover",
+      preferredAction: "First cut: keep the pull-up and row as the priority back work.",
+      rationale: "This accessory overlaps lats/chest already trained by the day's main lifts and is named in the plan's later reduction step.",
       sourceRule: "When To Reduce Volume · Step 5",
     },
     {
-      exerciseId: "friday-db-pullover",
-      title: "DB Pullover",
-      preferredAction: "Trim one set first; skip only if the session still must end.",
-      rationale: "This is lower priority than Friday's main press, pull-up, and row work.",
+      exerciseId: "friday-assisted-dip-chest-triceps-bias",
+      rank: 2,
+      title: "Assisted Dip",
+      preferredAction: "Second cut: preserve the flat press, pull-up, and row.",
+      rationale: "Chest and triceps retain flat pressing and extensions; the plan also names dip volume as reducible.",
       sourceRule: "When To Reduce Volume · Step 5",
+    },
+    {
+      exerciseId: "friday-rkc-plank",
+      rank: 3,
+      title: "RKC Plank",
+      preferredAction: "Third cut only if the main upper-body session is already complete.",
+      rationale: "Core retains Tuesday and Saturday work. This preserves every progressive Friday press and pull before removing more lifting.",
+      sourceRule: "Weekly core overlap; higher tradeoff",
     },
   ],
   saturday: [
     {
       exerciseId: "saturday-feet-elevated-push-up-or-db-squeeze-press",
+      rank: 1,
       title: "Feet-Elevated Push-Up",
       preferredAction: "First full exercise to skip when recovery or time is limited.",
       rationale: "This is the plan's first named volume reduction.",
       sourceRule: "When To Reduce Volume · Step 1",
     },
     {
-      exerciseId: "saturday-db-lateral-raise-mechanical-set",
-      title: "Lateral Raise Mechanical Set",
-      preferredAction: "Drop partials first; skip the full movement only if necessary.",
-      rationale: "The plan preserves strict reps before removing the mechanical-set partials.",
-      sourceRule: "When To Reduce Volume · Step 2",
+      exerciseId: "saturday-hammer-curl",
+      rank: 2,
+      title: "Hammer Curl",
+      preferredAction: "Second full-exercise cut after the push-up slot.",
+      rationale: "The plan reduces Saturday biceps volume early, and elbow flexors already receive substantial weekly direct and pulling work.",
+      sourceRule: "When To Reduce Volume · Step 3",
     },
     {
-      exerciseId: "saturday-hammer-curl",
-      title: "Hammer Curl",
-      preferredAction: "Trim one set first; skip only after the earlier Saturday cuts.",
-      rationale: "The plan reduces one Saturday biceps set before changing main workouts.",
-      sourceRule: "When To Reduce Volume · Step 3",
+      exerciseId: "saturday-hollow-body-hold",
+      rank: 3,
+      title: "Hollow Body Hold",
+      preferredAction: "Third cut: keep the specialization lifts and remove the redundant core finisher.",
+      rationale: "Core retains Tuesday and Friday work. The lateral-raise mechanical set stays because the plan says to remove partials before removing strict delt work.",
+      sourceRule: "Weekly core overlap; strict delt work preserved",
     },
   ],
 };

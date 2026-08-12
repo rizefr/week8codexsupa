@@ -1631,7 +1631,17 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
   );
 }
 
-function NextWorkoutBriefingPanel({ briefing, compact = false }: { briefing: NextWorkoutBriefing; compact?: boolean }) {
+function NextWorkoutBriefingPanel({
+  briefing,
+  compact = false,
+  log,
+  onApplyExerciseSelection,
+}: {
+  briefing: NextWorkoutBriefing;
+  compact?: boolean;
+  log?: WorkoutLog;
+  onApplyExerciseSelection?: (includedExerciseIds: Set<string>) => void;
+}) {
   const deload = briefing.deload;
   return (
     <section className={classNames("panel next-workout-briefing", compact && "compact", `deload-${deload.status}`)}>
@@ -1667,20 +1677,119 @@ function NextWorkoutBriefingPanel({ briefing, compact = false }: { briefing: Nex
         <summary>Short on time?</summary>
         {briefing.shortOnTime.length ? (
           <div className="short-on-time-list">
-            <p>Optional only. Keep the main lifts and never remove work silently.</p>
+            <p>
+              Ranked by the lowest cost to this routine, not because these movements are universally ineffective.
+              Priority lifts and unique muscle work stay protected first.
+            </p>
             {briefing.shortOnTime.map((option) => (
               <article key={option.exerciseId}>
-                <strong>{option.title}</strong>
+                <div className="short-cut-heading">
+                  <span className="short-cut-rank">Cut #{option.rank}</span>
+                  <strong>{option.title}</strong>
+                </div>
                 <span>{option.preferredAction}</span>
                 <small>{option.rationale} · {option.sourceRule}</small>
               </article>
             ))}
+            {log?.status === "draft" && onApplyExerciseSelection ? (
+              <ShortOnTimeExerciseSelector
+                log={log}
+                options={briefing.shortOnTime}
+                onApply={onApplyExerciseSelection}
+              />
+            ) : (
+              <p className="muted-copy">Start or continue the workout to choose exactly which exercises stay in today's plan.</p>
+            )}
           </div>
         ) : (
           <p className="muted-copy">The plan does not name a whole-exercise cut for this day. Keep the scheduled work; use the exercise skip only when genuinely necessary.</p>
         )}
       </details>
     </section>
+  );
+}
+
+function ShortOnTimeExerciseSelector({
+  log,
+  options,
+  onApply,
+}: {
+  log: WorkoutLog;
+  options: NextWorkoutBriefing["shortOnTime"];
+  onApply: (includedExerciseIds: Set<string>) => void;
+}) {
+  const selectionSignature = log.exerciseLogs.map((entry) => `${entry.exerciseId}:${entry.skipped ? "0" : "1"}`).join("|");
+  const [includedIds, setIncludedIds] = useState<Set<string>>(
+    () => new Set(log.exerciseLogs.filter((entry) => !entry.skipped).map((entry) => entry.exerciseId)),
+  );
+  useEffect(() => {
+    setIncludedIds(new Set(log.exerciseLogs.filter((entry) => !entry.skipped).map((entry) => entry.exerciseId)));
+  }, [selectionSignature]);
+
+  const currentIncludedIds = new Set(log.exerciseLogs.filter((entry) => !entry.skipped).map((entry) => entry.exerciseId));
+  const hasChanges = log.exerciseLogs.some((entry) => includedIds.has(entry.exerciseId) !== currentIncludedIds.has(entry.exerciseId));
+  const cutCount = log.exerciseLogs.filter((entry) => !includedIds.has(entry.exerciseId)).length;
+  const rankById = new Map(options.map((option) => [option.exerciseId, option.rank]));
+  const itemName = (exerciseId: string) => (
+    findExercise(exerciseId)?.name ??
+    workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseId)?.name ??
+    exerciseNameForId(exerciseId)
+  );
+  const toggle = (exerciseId: string) => {
+    setIncludedIds((current) => {
+      const next = new Set(current);
+      if (next.has(exerciseId)) next.delete(exerciseId);
+      else next.add(exerciseId);
+      return next;
+    });
+  };
+
+  return (
+    <div className="short-plan-selector">
+      <div className="short-plan-heading">
+        <div>
+          <strong>Choose today's exercises</strong>
+          <span>Everything starts selected. Uncheck a movement, then apply.</span>
+        </div>
+        <span>{cutCount ? `${cutCount} cut` : "Full plan"}</span>
+      </div>
+      <div className="short-plan-options">
+        {log.exerciseLogs.map((entry) => {
+          const included = includedIds.has(entry.exerciseId);
+          const rank = rankById.get(entry.exerciseId);
+          return (
+            <label key={entry.id} className={classNames("short-plan-option", !included && "will-cut")}>
+              <input
+                type="checkbox"
+                checked={included}
+                onChange={() => toggle(entry.exerciseId)}
+              />
+              <span>
+                <strong>{itemName(entry.exerciseId)}</strong>
+                <small>{rank ? `Recommended cut #${rank}` : "Keep if possible"}</small>
+              </span>
+              <b>{included ? "Included" : "Cut"}</b>
+            </label>
+          );
+        })}
+      </div>
+      <div className="short-plan-actions">
+        <button type="button" className="primary-action" disabled={!hasChanges} onClick={() => onApply(new Set(includedIds))}>
+          Apply exercise plan
+        </button>
+        <button
+          type="button"
+          className="secondary-action"
+          disabled={includedIds.size === log.exerciseLogs.length}
+          onClick={() => setIncludedIds(new Set(log.exerciseLogs.map((entry) => entry.exerciseId)))}
+        >
+          Select all
+        </button>
+      </div>
+      <p className="short-plan-safety">
+        Applying a cut keeps the exercise visible but grays and locks it. It earns no completion, volume, PR, trend, progression, or XP credit. Re-select and apply to restore it.
+      </p>
+    </div>
   );
 }
 
@@ -2101,6 +2210,33 @@ function LoggerPage({
     if (log.status !== "draft") return;
     onStartRest(exercise);
   };
+  const applyExerciseSelection = (includedExerciseIds: Set<string>) => {
+    if (log.status !== "draft") return;
+    const cutRankById = new Map(briefing.shortOnTime.map((option) => [option.exerciseId, option.rank]));
+    updateLog((current) => ({
+      ...current,
+      exerciseLogs: current.exerciseLogs.map((entry) => {
+        if (!includedExerciseIds.has(entry.exerciseId)) {
+          const rank = cutRankById.get(entry.exerciseId);
+          return {
+            ...entry,
+            skipped: true,
+            skippedAt: new Date().toISOString(),
+            skipReason: rank ? `Short on time · Recommended cut #${rank}` : "Short on time · User-selected cut",
+            completed: false,
+          };
+        }
+        if (!entry.skipped) return entry;
+        const { skipped, skippedAt, skipReason, ...restored } = entry;
+        return {
+          ...restored,
+          completed: restored.sets.length
+            ? restored.sets.every((set) => set.completed)
+            : !!restored.cardio?.completed,
+        };
+      }),
+    }));
+  };
   const primaryWarmups = isTrainingDay(log.dayKey) ? warmupsForDay(log.dayKey, "general") : postureWarmups();
   const warmupTitle = isTrainingDay(log.dayKey) ? "Pre-Workout Warm-Up" : "Optional Posture Routine";
   const toggleWarmup = (drillId: string, completed: boolean) => updateLog((current) => updateWarmupDrill(current, drillId, completed));
@@ -2157,7 +2293,14 @@ function LoggerPage({
         </div>
       </section>
 
-      {log.status === "draft" && isTrainingDay(log.dayKey) && <NextWorkoutBriefingPanel briefing={briefing} compact />}
+      {log.status === "draft" && isTrainingDay(log.dayKey) && (
+        <NextWorkoutBriefingPanel
+          briefing={briefing}
+          compact
+          log={log}
+          onApplyExerciseSelection={applyExerciseSelection}
+        />
+      )}
 
       {gamification.settings.enabled && (
         <div className="logger-game-strip">

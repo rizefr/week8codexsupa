@@ -21,10 +21,13 @@ export interface RestTimerState {
 let restTimerAudioContext: AudioContext | null = null;
 
 export const REST_TIMER_ALARM_PATTERN = [
-  { frequency: 784, start: 0, duration: 0.24, gain: 0.08 },
-  { frequency: 988, start: 0.27, duration: 0.24, gain: 0.09 },
-  { frequency: 784, start: 0.56, duration: 0.34, gain: 0.08 },
+  { frequency: 880, start: 0, duration: 0.22, gain: 0.16 },
+  { frequency: 660, start: 0.28, duration: 0.22, gain: 0.15 },
+  { frequency: 880, start: 0.56, duration: 0.22, gain: 0.17 },
+  { frequency: 660, start: 0.84, duration: 0.34, gain: 0.16 },
 ] as const;
+
+export const REST_TIMER_REPEAT_MS = 1800;
 
 export function primeRestTimerAudio(): void {
   try {
@@ -35,7 +38,7 @@ export function primeRestTimerAudio(): void {
   }
 }
 
-function playRestTimerChime(): void {
+function playRestTimerAlarm(): void {
   try {
     restTimerAudioContext ??= new AudioContext();
     const context = restTimerAudioContext;
@@ -44,7 +47,7 @@ function playRestTimerChime(): void {
     REST_TIMER_ALARM_PATTERN.forEach((pulse, index) => {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
-      oscillator.type = index === REST_TIMER_ALARM_PATTERN.length - 1 ? "sine" : "triangle";
+      oscillator.type = index % 2 === 0 ? "triangle" : "sine";
       oscillator.frequency.value = pulse.frequency;
       gain.gain.setValueAtTime(0.0001, start + pulse.start);
       gain.gain.exponentialRampToValueAtTime(pulse.gain, start + pulse.start + 0.025);
@@ -84,6 +87,7 @@ export function RestTimer({
   // The 1 Hz tick lives here so the logger tree doesn't re-render every second.
   const [now, setNow] = useState(() => Date.now());
   const vibratedForRef = useRef<number | null>(null);
+  const dismissButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 500);
@@ -101,15 +105,23 @@ export function RestTimer({
   const done = remaining <= 0;
 
   useEffect(() => {
-    if (!done || vibratedForRef.current === timer.endsAt) return;
+    if (!done) return;
+    dismissButtonRef.current?.focus();
+    const ring = () => {
+      if (document.visibilityState === "hidden") return;
+      if (vibrateOnDone) navigator.vibrate?.([260, 100, 260]);
+      if (soundOnDone) playRestTimerAlarm();
+    };
+    ring();
     vibratedForRef.current = timer.endsAt;
-    if (vibrateOnDone) navigator.vibrate?.([180, 90, 180]);
-    if (soundOnDone) playRestTimerChime();
+    const interval = window.setInterval(ring, REST_TIMER_REPEAT_MS);
+    return () => window.clearInterval(interval);
   }, [done, timer.endsAt, vibrateOnDone, soundOnDone]);
 
   const progress = timer.total > 0 ? Math.min(100, Math.max(0, ((timer.total - remaining) / timer.total) * 100)) : 100;
 
   return (
+    <>
     <div className={`rest-timer-chip${done ? " done" : ""}`} role="timer" aria-live={done ? "assertive" : "off"}>
       <div className="rest-timer-ring" style={{ "--timer-progress": `${progress}%` } as React.CSSProperties}>
         <strong>{done ? "Go" : formatClock(remaining)}</strong>
@@ -129,5 +141,22 @@ export function RestTimer({
         </div>
       </details>
     </div>
+    {done && (
+      <div className="rest-alarm-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="rest-alarm-title">
+        <div className="rest-alarm-dialog">
+          <div className="rest-alarm-pulse" aria-hidden="true" />
+          <span>Timer finished</span>
+          <h2 id="rest-alarm-title">Rest complete</h2>
+          <p>Next set for {timer.exerciseName}. The alarm repeats until you dismiss it.</p>
+          <button ref={dismissButtonRef} type="button" className="primary-action rest-alarm-dismiss" onClick={onDismiss}>
+            Dismiss alarm
+          </button>
+          <button type="button" className="mini-action" onClick={onToggleSound}>
+            Sound {soundOnDone ? "on" : "off"}
+          </button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
