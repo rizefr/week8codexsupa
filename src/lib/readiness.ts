@@ -1,5 +1,6 @@
 import { AppData, DayKey, Exercise, ExerciseFlag, ExerciseFlagKind, ExerciseFlagSeverity, ExerciseLog, WorkoutLog } from "../types";
 import { workoutDays } from "../data/routine";
+import { CORNELL_ID, cornellActive, cornellDays, daysForDate, workoutForLog } from "../data/cornell";
 import {
   exerciseSessions,
   findExercise,
@@ -159,7 +160,19 @@ const shortOnTimeByDay: Partial<Record<DayKey, ShortOnTimeOption[]>> = {
   ],
 };
 
-export function shortOnTimeGuidance(dayKey: DayKey): ShortOnTimeOption[] {
+export function shortOnTimeGuidance(dayKey: DayKey, programId?: string): ShortOnTimeOption[] {
+  if (programId === CORNELL_ID) {
+    const choices: Partial<Record<DayKey, Array<[string, string]>>> = {
+      friday: [["cn-split-squat", "Leg press preserves the main quad/glute work; this removes the extra unilateral slot."], ["cn-cable-crunch", "Core still has Tuesday work and ROTC. This reduces direct ab-hypertrophy work."], ["cn-calf-a", "Tuesday retains calves, but removing this is a larger weekly calf-volume tradeoff."]],
+      saturday: [["cn-incline-curl", "Pulling and Wednesday curls remain."], ["cn-cable-triceps", "Pressing and ROTC still train triceps; this costs the week's direct long-head work."], ["cn-pec-fly", "Both priority presses remain. This reduces chest-specific weekly volume."]],
+      tuesday: [["cn-leg-extension", "Leg press and Friday split squats retain quad work."], ["cn-reverse-crunch", "Friday direct abs and ROTC remain."], ["cn-calf-b", "Friday calves remain; a higher-tradeoff cut."]],
+      wednesday: [["cn-curl-b", "Saturday curls and all pulling remain."], ["cn-rear-delt", "Rows retain some rear-delt stimulus, but this removes direct work."], ["cn-seated-row", "Saturday rowing remains. Keep the pulldown for back width."]],
+    };
+    return (choices[dayKey] ?? []).map(([id, rationale], index) => ({ exerciseId: id, rank: index + 1,
+      title: cornellDays[dayKey].exercises.find((exercise) => exercise.id === id)!.name,
+      preferredAction: `Optional cut #${index + 1}; never automatic.`, rationale,
+      sourceRule: "Cornell weekly coverage and fatigue tradeoff, not an exercise-effectiveness ranking" }));
+  }
   return (shortOnTimeByDay[dayKey] ?? []).slice(0, 3);
 }
 
@@ -214,7 +227,7 @@ export function buildExerciseFlagPatterns(
   currentDate: string,
   dayKey?: DayKey,
 ): ExerciseFlagPattern[] {
-  const plannedIds = dayKey ? new Set(workoutDays[dayKey].exercises.map((exercise) => exercise.id)) : null;
+  const plannedIds = dayKey ? new Set(daysForDate(currentDate)[dayKey].exercises.map((exercise) => exercise.id)) : null;
   const grouped = new Map<string, { exerciseId: string; kind: ExerciseFlagKind; area?: string; flags: Array<{ flag: ExerciseFlag; date: string }> }>();
 
   logs
@@ -412,8 +425,10 @@ function excerpt(value: string, maxLength = 120): string {
 }
 
 export function buildNextWorkoutBriefing(data: AppData, currentDate: string, dayKey: DayKey): NextWorkoutBriefing {
-  const workout = workoutDays[dayKey];
-  const deload = assessDeloadNeed(data.workoutLogs, currentDate);
+  const activeLog = data.workoutLogs.find((log) => log.date === currentDate && log.dayKey === dayKey);
+  const workout = activeLog ? workoutForLog(activeLog) : daysForDate(currentDate)[dayKey];
+  const programId = activeLog ? activeLog.programId : cornellActive(currentDate) ? CORNELL_ID : undefined;
+  const deload = assessDeloadNeed(data.workoutLogs.filter((log) => log.programId === programId), currentDate);
   const flagPatterns = buildExerciseFlagPatterns(data.workoutLogs, currentDate, dayKey);
   const tips: WorkoutBriefingTip[] = flagPatterns.slice(0, 2).map((pattern) => ({
     exerciseId: pattern.exerciseId,
@@ -438,9 +453,7 @@ export function buildNextWorkoutBriefing(data: AppData, currentDate: string, day
       exerciseId: item.exercise.id,
       title: `${item.exercise.name}: ${item.recommendation.title}`,
       detail: `${item.recommendation.detail}${noteContext}`,
-      evidence: item.recommendation.kind === "insufficient"
-        ? "No confirmed comparable evidence from a prior session."
-        : item.recommendation.evidence,
+      evidence: item.recommendation.evidence,
       tone: item.recommendation.kind === "add-load" || item.recommendation.kind === "add-rep" || item.recommendation.kind === "add-time" || item.recommendation.kind === "reduce-assistance"
         ? "progress"
         : item.recommendation.kind === "hold" ? "hold" : "neutral",
@@ -449,9 +462,9 @@ export function buildNextWorkoutBriefing(data: AppData, currentDate: string, day
 
   if (!workout.exercises.length) {
     tips.push({
-      title: "Recovery day",
-      detail: "Use the planned rest or easy-walk option. Do not add lifting to manufacture progress.",
-      evidence: "Today is a scheduled recovery day.",
+      title: workout.title,
+      detail: workout.intent ?? "Use the planned rest or easy-walk option. Do not add lifting to manufacture progress.",
+      evidence: "Follow the day's plan; this is not an extra strength session.",
       tone: "neutral",
     });
   }
@@ -460,7 +473,7 @@ export function buildNextWorkoutBriefing(data: AppData, currentDate: string, day
     dayKey,
     deload,
     flagPatterns,
-    shortOnTime: shortOnTimeGuidance(dayKey),
+    shortOnTime: shortOnTimeGuidance(dayKey, programId),
     tips: tips.slice(0, 3),
   };
 }

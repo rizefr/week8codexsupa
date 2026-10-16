@@ -1,5 +1,10 @@
 # Free Online Deployment
 
+**Existing production app:** use the existing `week8codexsupa` Netlify site and
+Supabase project `kjxhsmtikuzylephtuiq`. The new-project steps below are only for
+fresh installations, not recovery or updates. Do not run schema setup or create
+a replacement database for this live app. RetellDemo is unrelated.
+
 This app is set up for:
 
 - Netlify for the public website

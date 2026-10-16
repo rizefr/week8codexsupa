@@ -1,7 +1,23 @@
 import { DayKey, WarmupDrill, WarmupLog, WorkoutLog } from "../types";
 import { isTrainingDay } from "../lib/progress";
+import { CORNELL_ID, cornellDays } from "./cornell";
 
 const easyEffort = "Easy RPE 2-4; prime joints and positions without fatigue.";
+
+function cornellWarmups(dayKey: DayKey): WarmupDrill[] {
+  const workout = cornellDays[dayKey];
+  if (!workout.exercises.length) return [];
+  const lower = dayKey === "tuesday" || dayKey === "friday";
+  const general: WarmupDrill[] = [
+    { id: `cn-${dayKey}-walk`, dayKey, order: 1, name: "Easy walk", prescription: "2-3 min", type: "general", when: "Before lifting", why: "Raise temperature without tiring your legs.", effortTarget: easyEffort },
+    { id: `cn-${dayKey}-rehearse`, dayKey, order: 2, name: lower ? "Bodyweight hinge + squat" : "Wall slides + scapular push-ups", prescription: "5-8 comfortable reps each", type: "general", when: "Before lifting", why: "Rehearse the day's positions; stop before fatigue.", effortTarget: easyEffort },
+  ];
+  return [...general, ...workout.exercises.slice(0, 2).map((exercise, index): WarmupDrill => ({
+    id: `${exercise.id}-ramp`, dayKey, order: index + 3, name: `${exercise.name} ramp-up`, prescription: "1-3 progressively heavier easy sets",
+    type: "pre-exercise", exerciseId: exercise.id, when: "Immediately before working sets", effortTarget: easyEffort,
+    why: exercise.trackingType === "assistance-reps" ? "Start with more assistance; warm up without approaching failure." : "Start light, rehearse setup, and use fewer reps as load rises. Not working sets.",
+  }))];
+}
 
 // Future warm-up edits belong here. Keep warm-ups separate from workout exercise
 // logs so they never affect PRs, volume, trends, or working-set quality.
@@ -82,21 +98,22 @@ export const doNotDoBeforeLifting = [
   "Weighted lateral raise warm-up sets",
 ];
 
-export function warmupsForDay(dayKey: DayKey, type?: WarmupDrill["type"]): WarmupDrill[] {
-  const drills = warmupDrillsByDay[dayKey] ?? [];
+export function warmupsForDay(dayKey: DayKey, type?: WarmupDrill["type"], programId?: string): WarmupDrill[] {
+  const drills = programId === CORNELL_ID ? cornellWarmups(dayKey) : warmupDrillsByDay[dayKey] ?? [];
   return (type ? drills.filter((drill) => drill.type === type) : drills).sort((a, b) => a.order - b.order);
 }
 
-export function preExerciseWarmupsForExercise(dayKey: DayKey, exerciseId: string): WarmupDrill[] {
-  return warmupsForDay(dayKey, "pre-exercise").filter((drill) => drill.exerciseId === exerciseId);
+export function preExerciseWarmupsForExercise(dayKey: DayKey, exerciseId: string, programId?: string): WarmupDrill[] {
+  return warmupsForDay(dayKey, "pre-exercise", programId).filter((drill) => drill.exerciseId === exerciseId);
 }
 
 export function postureWarmups(): WarmupDrill[] {
   return [...restDayPostureRoutine].sort((a, b) => a.order - b.order);
 }
 
-export function drillsForLog(log?: Pick<WorkoutLog, "dayKey">): WarmupDrill[] {
+export function drillsForLog(log?: Pick<WorkoutLog, "dayKey" | "programId">): WarmupDrill[] {
   if (!log) return [];
+  if (log.programId === CORNELL_ID) return cornellWarmups(log.dayKey);
   return isTrainingDay(log.dayKey) ? warmupsForDay(log.dayKey) : postureWarmups();
 }
 
@@ -104,7 +121,7 @@ export function isWarmupComplete(warmupLog: WarmupLog | undefined, drillId: stri
   return warmupLog?.completedDrills?.[drillId] === true;
 }
 
-export function warmupCompletionSummary(log?: Pick<WorkoutLog, "dayKey" | "warmupLog">) {
+export function warmupCompletionSummary(log?: Pick<WorkoutLog, "dayKey" | "warmupLog" | "programId">) {
   const drills = drillsForLog(log);
   const completed = drills.filter((drill) => isWarmupComplete(log?.warmupLog, drill.id)).length;
   const general = drills.filter((drill) => drill.type === "general");

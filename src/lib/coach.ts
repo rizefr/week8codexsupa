@@ -1,5 +1,6 @@
 import { AppData, BodyWeightLog, Exercise, ExerciseLog, MuscleGroup, ReplacementOption, SetLog, WorkoutLog } from "../types";
 import { trainingDayKeys } from "../data/routine";
+import { isTrainingLog, trainingDaysForDate, weekForLog } from "../data/cornell";
 import { warmupCompletionSummary } from "../data/warmups";
 import { addDays, getCycleInfo, todayISO } from "./date";
 import {
@@ -22,6 +23,7 @@ import {
   repsForSet,
   rirRequiredForExercise,
   targetRIRForExercise,
+  exerciseLogHasComparablePerformance,
   topRepTarget,
   totalRepsForExerciseLog,
   trackingTypeForExercise,
@@ -292,7 +294,7 @@ export function buildExerciseFeedback(exerciseLog: ExerciseLog, workout: Workout
     comparisonMessage(exerciseLog, workout, data, exercise),
     topRangeMessage(sets, exercise),
     setDropMessage(sets, exercise),
-    rirMessage(sets, exercise, workout.weekInCycle),
+    rirMessage(sets, exercise, weekForLog(workout)),
     movementSpecificInsight(exerciseLog, exercise),
   ].filter((item): item is CoachInsight => Boolean(item));
 
@@ -375,6 +377,7 @@ export function buildWorkoutCoachSummary(log: WorkoutLog, data: AppData, gamific
   const noteText = `${log.notes ?? ""} ${log.exerciseLogs.map((exerciseLog) => `${exerciseLog.notes ?? ""} ${exerciseLog.sets.map((set) => set.notes ?? "").join(" ")}`).join(" ")}`;
   const exerciseNotes = clampList(log.exerciseLogs.map((exerciseLog) => buildExerciseFeedback(exerciseLog, log, data)).filter((item): item is ExerciseCoachFeedback => Boolean(item)), 5);
   const bodyParts = log.exerciseLogs
+    .filter((entry) => exerciseLogHasComparablePerformance(entry))
     .flatMap((exerciseLog) => findExercise(exerciseLog.exerciseId)?.muscleGroups ?? [])
     .filter((group, index, groups) => groups.indexOf(group) === index);
 
@@ -458,7 +461,7 @@ export function buildDashboardCoachSummary(data: AppData, gamification: Gamifica
   const nextBadge = [...gamification.achievements]
     .filter((badge) => !badge.unlocked)
     .sort((a, b) => (b.progressCurrent / Math.max(1, b.progressTarget)) - (a.progressCurrent / Math.max(1, a.progressTarget)))[0];
-  const totalWorkouts = data.workoutLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).length;
+  const totalWorkouts = data.workoutLogs.filter((log) => log.status === "completed" && isTrainingLog(log)).length;
   const volumeTrend = data.workoutLogs.filter((log) => log.status === "completed").slice(0, 2).map(workoutVolume);
 
   return {
@@ -466,12 +469,12 @@ export function buildDashboardCoachSummary(data: AppData, gamification: Gamifica
     weeklyCue: buildWeeklyFocus(data, gamification).detail,
     nextBadge: nextBadge ? `${nextBadge.title}: ${nextBadge.progressCurrent}/${nextBadge.progressTarget}` : "All current badges are unlocked.",
     disciplineCue: gamification.settings.showDisciplineCues === false
-      ? `${Math.max(0, trainingDayKeys.length - weekCompleted)} workout${trainingDayKeys.length - weekCompleted === 1 ? "" : "s"} left for a strong week.`
-      : weekCompleted >= trainingDayKeys.length
+      ? `${Math.max(0, trainingDaysForDate().length - weekCompleted)} workout${trainingDaysForDate().length - weekCompleted === 1 ? "" : "s"} left for a strong week.`
+      : weekCompleted >= trainingDaysForDate().length
         ? "Week handled. Put the same discipline into one business action today."
-        : `${Math.max(0, trainingDayKeys.length - weekCompleted)} workout${trainingDayKeys.length - weekCompleted === 1 ? "" : "s"} left for a strong week.`,
+        : `${Math.max(0, trainingDaysForDate().length - weekCompleted)} workout${trainingDaysForDate().length - weekCompleted === 1 ? "" : "s"} left for a strong week.`,
     lockInReasons: [
-      `${weekCompleted}/${trainingDayKeys.length} workouts this week`,
+      `${weekCompleted}/${trainingDaysForDate().length} workouts this week`,
       `${gamification.executionScore.logging}% logging quality`,
       prsThisWeek.length ? `${prsThisWeek.length} PR${prsThisWeek.length === 1 ? "" : "s"} this week` : `${totalWorkouts} completed workouts all-time`,
       volumeTrend.length === 2 && volumeTrend[0] >= volumeTrend[1] ? "recent workload holding or rising" : "routine data is building",

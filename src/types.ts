@@ -221,6 +221,9 @@ export interface ExerciseLog {
 
 export interface WorkoutLog {
   id: string;
+  /** Missing means the original home-gym routine; never backfill old logs. */
+  programId?: "cornell-v1";
+  programStartDate?: string;
   date: string;
   week: number;
   cycle?: number;

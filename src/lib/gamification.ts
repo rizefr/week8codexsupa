@@ -1,5 +1,6 @@
 import { AppData, BodyWeightLog, DayKey, Exercise, ExerciseLog, GamificationSettings, ProgramSettings, SetLog, WorkoutLog } from "../types";
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
+import { CORNELL_ID, CORNELL_START, cornellActive, cornellWeek, daysForDate, exercisesForDate, isTrainingLog, trainingDaysForDate, weekForLog, workoutForLog } from "../data/cornell";
 import { warmupCompletionSummary } from "../data/warmups";
 import { addDays, dayKeyForDate, daysSince, getCycleInfo, todayISO } from "./date";
 import {
@@ -329,12 +330,12 @@ function setIsFullyLogged(set: SetLog, exercise: Exercise): boolean {
   return set.completed && setInputsAreValid(set, exercise);
 }
 
-function exerciseLogFullyLogged(log: ExerciseLog): boolean {
+function exerciseLogFullyLogged(log: ExerciseLog, expectedSets?: number): boolean {
   if (log.skipped) return false;
   const exercise = findExercise(log.exerciseId);
   if (!exercise) return !!log.cardio?.completed;
   if (!exercise.sets) return true;
-  return log.sets.length === exercise.sets && log.sets.every((set) => setIsFullyLogged(set, exercise));
+  return log.sets.length === (expectedSets ?? exercise.sets) && log.sets.every((set) => setIsFullyLogged(set, exercise));
 }
 
 export function loggingQualityForWorkout(log: WorkoutLog): number {
@@ -401,10 +402,16 @@ function weekDates(startDate: string, week: number): string[] {
 }
 
 function completedTrainingDatesByWeek(logs: WorkoutLog[], week: number): Set<string> {
-  return new Set(logs.filter((log) => log.week === week && log.status === "completed" && isTrainingDay(log.dayKey)).map((log) => log.date));
+  return new Set(logs.filter((log) => log.week === week && log.status === "completed" && isTrainingLog(log)).map((log) => log.date));
 }
 
 function allScheduledWorkoutsComplete(logs: WorkoutLog[], week: number): boolean {
+  const cornell = logs.filter((log) => log.week === week && log.programId === CORNELL_ID);
+  if (cornell.length) {
+    const complete = cornell.filter((log) => log.status === "completed" && isTrainingLog(log));
+    return new Set(complete.map((log) => log.date)).size >= 4 &&
+      trainingDaysForDate(cornell[0].date).every((day) => complete.some((log) => log.dayKey === day));
+  }
   const days = completedTrainingDatesByWeek(logs, week);
   return days.size >= trainingDayKeys.length;
 }
@@ -673,17 +680,18 @@ function buildXPEventsImpl(data: AppData): XPEvent[] {
 
   logs.forEach((log) => {
     const dayKey = log.dayKey;
-    const workout = getWorkoutByKey(dayKey);
-    const isTraining = isTrainingDay(dayKey);
+    const resolved = workoutForLog(log);
+    const workout = log.programId === CORNELL_ID ? { ...resolved, exercises: exercisesForDate(resolved, log.date) } : resolved;
+    const isTraining = isTrainingLog(log);
     const isCompleted = log.status === "completed";
     const hasEasyCardio = log.exerciseLogs.some((exerciseLog) => exerciseLog.cardio?.completed && !HARD_CARDIO_RE.test(exerciseLog.cardio?.intensityNotes ?? ""));
     const allExercisesComplete = workout.exercises.length > 0 && workout.exercises.every((exercise) => {
       const exerciseLog = log.exerciseLogs.find((item) => item.exerciseId === exercise.id);
-      return !!exerciseLog && (exerciseLog.completed || exerciseLog.sets.every((set) => set.completed));
+      return !!exerciseLog && !exerciseLog.skipped && (exerciseLog.completed || (!!exerciseLog.sets.length && exerciseLog.sets.every((set) => set.completed)));
     });
     const fullLogging = workout.exercises.length > 0 && workout.exercises.every((exercise) => {
       const exerciseLog = log.exerciseLogs.find((item) => item.exerciseId === exercise.id);
-      return !!exerciseLog && exerciseLogFullyLogged(exerciseLog);
+      return !!exerciseLog && exerciseLogFullyLogged(exerciseLog, exercise.sets);
     });
 
     if (isTraining && isCompleted) {
@@ -724,7 +732,7 @@ function buildXPEventsImpl(data: AppData): XPEvent[] {
       const date = weekDates(startDate, week).at(-1) ?? today;
       add({ key: `weekly-completion:${week}`, kind: "weekly", date, label: `Program Week ${week} complete`, xp: 150, programWeek: week });
       const weekLogs = logs.filter((log) => log.week === week);
-      const clean = weekLogs.every((log) => !hasHardCardio(log)) && weekLogs.filter((log) => !isTrainingDay(log.dayKey)).every((log) => !completedSetCount(log));
+      const clean = weekLogs.every((log) => log.programId === CORNELL_ID || !hasHardCardio(log)) && weekLogs.filter((log) => !isTrainingLog(log)).every((log) => !completedSetCount(log));
       if (clean) {
         add({ key: `clean-week:${week}`, kind: "clean-week", date, label: `Clean execution week`, xp: 100, programWeek: week });
       }
@@ -751,9 +759,9 @@ function buildXPEventsImpl(data: AppData): XPEvent[] {
 function dailyActionDates(data: AppData): string[] {
   const dates = new Set<string>();
   canonicalWorkoutLogs(data.workoutLogs).forEach((log) => {
-    if (log.status === "completed" && isTrainingDay(log.dayKey)) dates.add(log.date);
+    if (log.status === "completed" && isTrainingLog(log)) dates.add(log.date);
     if (log.restDay?.completed) dates.add(log.date);
-    if (log.exerciseLogs.some((exerciseLog) => exerciseLog.cardio?.completed)) dates.add(log.date);
+    if (log.exerciseLogs.some((exerciseLog) => !exerciseLog.skipped && exerciseLog.cardio?.completed)) dates.add(log.date);
   });
   bodyWeightDates(data.bodyWeights).forEach((date) => dates.add(date));
   return Array.from(dates).sort();
@@ -762,7 +770,7 @@ function dailyActionDates(data: AppData): string[] {
 export const calculateStreaks = memoizeByInput(calculateStreaksImpl);
 function calculateStreaksImpl(data: AppData): StreakStats {
   const logs = canonicalWorkoutLogs(data.workoutLogs);
-  const completedTrainingDates = logs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).map((log) => log.date).sort();
+  const completedTrainingDates = logs.filter((log) => log.status === "completed" && isTrainingLog(log)).map((log) => log.date).sort();
   const actionDates = dailyActionDates(data);
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs);
   const today = todayISO();
@@ -783,7 +791,7 @@ function scheduledWorkoutStreak(completedDates: string[], startDate: string, tod
   const totalDays = Math.max(0, daysSince(startDate, today));
   for (let offset = 0; offset <= totalDays; offset += 1) {
     const date = addDays(startDate, offset);
-    if (!isTrainingDay(dayKeyForDate(date))) continue;
+    if (!trainingDaysForDate(date).includes(dayKeyForDate(date))) continue;
     if (completed.has(date)) current += 1;
     else current = 0;
     best = Math.max(best, current);
@@ -848,18 +856,18 @@ export function calculateExecutionScore(data: AppData): ExecutionScore {
   const currentWeek = getCycleInfo(startDate, today).programWeek;
   const lookbackWeeks = Array.from({ length: Math.min(8, currentWeek) }, (_, index) => currentWeek - index).filter((week) => week > 0);
   const relevantLogs = logs.filter((log) => lookbackWeeks.includes(log.week));
-  const dueTrainingDays = lookbackWeeks.length * trainingDayKeys.length;
-  const completedTraining = relevantLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).length;
+  const dueTrainingDays = lookbackWeeks.reduce((sum, week) => sum + trainingDaysForDate(weekDates(startDate, week).at(-1) ?? today).length, 0);
+  const completedTraining = relevantLogs.filter((log) => log.status === "completed" && isTrainingLog(log)).length;
   const consistency = scorePercent(completedTraining, Math.max(1, dueTrainingDays));
 
-  const completedLogs = relevantLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey));
+  const completedLogs = relevantLogs.filter((log) => log.status === "completed" && isTrainingLog(log));
   const logging = completedLogs.length
     ? Math.round(completedLogs.reduce((sum, log) => sum + loggingQualityForWorkout(log), 0) / completedLogs.length)
     : 70;
 
   const recoveryPenalties =
-    relevantLogs.filter((log) => hasHardCardio(log)).length * 18 +
-    relevantLogs.filter((log) => !isTrainingDay(log.dayKey) && completedSetCount(log) > 0).length * 25 +
+    relevantLogs.filter((log) => log.programId !== CORNELL_ID && hasHardCardio(log)).length * 18 +
+    relevantLogs.filter((log) => !isTrainingLog(log) && completedSetCount(log) > 0).length * 25 +
     relevantLogs.filter((log) => hasPainOrRegression(log)).length * 6;
   const recovery = Math.max(45, 100 - recoveryPenalties);
 
@@ -914,13 +922,14 @@ export function generateDailyActivity(data: AppData): DailyActivity[] {
     const dayLogs = logs.filter((log) => log.date === date);
     const dayXP = xpEvents.filter((event) => event.date === date).reduce((sum, event) => sum + event.xp, 0);
     const hasPR = prs.some((pr) => pr.date === date);
-    const completed = dayLogs.some((log) => log.status === "completed" && isTrainingDay(log.dayKey));
-    const started = dayLogs.some((log) => log.status === "draft" && isTrainingDay(log.dayKey));
+    const completed = dayLogs.some((log) => log.status === "completed" && isTrainingLog(log));
+    const started = dayLogs.some((log) => log.status === "draft" && isTrainingLog(log));
     const rest = dayLogs.some((log) => log.restDay?.completed);
+    const conditioning = dayLogs.some((log) => log.programId === CORNELL_ID && log.status === "completed" && log.exerciseLogs.some((entry) => !entry.skipped && entry.cardio?.completed));
     const full = dayLogs.some((log) => loggingQualityForWorkout(log) >= 95 && log.status === "completed");
-    const state: DailyActivity["state"] = hasPR || dayXP >= 180 ? "high" : full ? "full" : completed ? "completed" : started ? "started" : rest ? "rest" : "none";
+    const state: DailyActivity["state"] = hasPR || dayXP >= 180 ? "high" : full ? "full" : completed || conditioning ? "completed" : started ? "started" : rest ? "rest" : "none";
     const summaryParts = [
-      completed ? "Workout completed" : started ? "Workout started" : rest ? "Recovery check-in" : "",
+      completed ? "Workout completed" : conditioning ? "Conditioning logged" : started ? "Workout started" : rest ? "Recovery check-in" : "",
       weights.has(date) ? "Body weight logged" : "",
       hasPR ? "PR day" : "",
       dayXP ? `${dayXP} XP` : "",
@@ -939,7 +948,7 @@ export function generateDailyActivity(data: AppData): DailyActivity[] {
 
 export function unlockAchievements(data: AppData, memory: GamificationSettings): Achievement[] {
   const logs = canonicalWorkoutLogs(data.workoutLogs);
-  const completedWorkouts = logs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey));
+  const completedWorkouts = logs.filter((log) => log.status === "completed" && isTrainingLog(log));
   const prs = detectPRs(data);
   const streaks = calculateStreaks(data);
   const xpEvents = buildXPEvents(data);
@@ -948,6 +957,16 @@ export function unlockAchievements(data: AppData, memory: GamificationSettings):
   const fullWeeks = Array.from({ length: currentWeek }, (_, index) => index + 1).filter((week) => allScheduledWorkoutsComplete(logs, week));
   const cleanWeeks = xpEvents.filter((event) => event.kind === "clean-week").length;
   const comeback = xpEvents.some((event) => event.kind === "comeback");
+  const legacyCycleCount = completedWorkouts.filter((log) => !log.programId && (log.cycle ?? 1) === 1).length;
+  const cornellCycles = new Map<number, Set<string>>();
+  completedWorkouts.filter((log) => log.programId === CORNELL_ID).forEach((log) => {
+    const cycle = getCycleInfo(log.programStartDate ?? CORNELL_START, log.date).cycle;
+    const dates = cornellCycles.get(cycle) ?? new Set<string>();
+    dates.add(log.date);
+    cornellCycles.set(cycle, dates);
+  });
+  const cornellCycleCount = Math.max(0, ...Array.from(cornellCycles.values(), (dates) => dates.size));
+  const useCornellCycle = cornellActive() && cornellCycleCount / 32 >= legacyCycleCount / 40;
 
   const definitions: Array<Omit<Achievement, "unlocked" | "unlockedAt">> = [
     { id: "first-workout", title: "First Workout Logged", description: "Complete your first scheduled workout.", progressCurrent: completedWorkouts.length, progressTarget: 1 },
@@ -960,7 +979,7 @@ export function unlockAchievements(data: AppData, memory: GamificationSettings):
     { id: "seven-day-checkin", title: "7-Day Check-In Streak", description: "Build a 7-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 7 },
     { id: "fourteen-day-checkin", title: "14-Day Check-In Streak", description: "Build a 14-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 14 },
     { id: "rest-day-discipline", title: "Rest Day Discipline", description: "Complete 4 recovery/rest check-ins.", progressCurrent: logs.filter((log) => log.restDay?.completed).length, progressTarget: 4 },
-    { id: "first-cycle", title: "First Cycle Completed", description: "Complete 40 scheduled workouts in a cycle.", progressCurrent: completedWorkouts.filter((log) => (log.cycle ?? 1) === 1).length, progressTarget: 40 },
+    { id: "first-cycle", title: "First Cycle Completed", description: useCornellCycle ? "Complete 32 essential workouts in a Cornell cycle." : "Complete 40 scheduled workouts in an original cycle.", progressCurrent: useCornellCycle ? cornellCycleCount : legacyCycleCount, progressTarget: useCornellCycle ? 32 : 40 },
     { id: "body-weight-tracker", title: "Body Weight Tracker", description: "Log body weight 8 times.", progressCurrent: bodyWeightDates(data.bodyWeights).size, progressTarget: 8 },
     { id: "no-missed-week", title: "No Missed Workouts This Week", description: "Finish a program week with no missed scheduled workouts.", progressCurrent: fullWeeks.includes(currentWeek) ? 1 : 0, progressTarget: 1 },
     { id: "comeback-workout", title: "Comeback Workout", description: "Return after missing multiple days.", progressCurrent: comeback ? 1 : 0, progressTarget: 1 },
@@ -1007,7 +1026,7 @@ function safePercent(value: number, target: number): number {
 }
 
 function scheduledWorkoutComplete(logs: WorkoutLog[], dayKey: DayKey, week: number): boolean {
-  return logs.some((log) => log.week === week && log.dayKey === dayKey && log.status === "completed" && isTrainingDay(log.dayKey));
+  return logs.some((log) => log.week === week && log.dayKey === dayKey && log.status === "completed" && isTrainingLog(log));
 }
 
 function plannedSetTargetForMuscles(groups: string[]): number {
@@ -1037,16 +1056,20 @@ function safeRirSetStats(logs: WorkoutLog[]) {
   let riskyTooLow = 0;
   logs.forEach((log) => {
     log.exerciseLogs.forEach((exerciseLog) => {
+      if (exerciseLog.skipped) return;
       const exercise = findExercise(exerciseLog.exerciseId);
       if (!exercise) return;
       const risk = exercise.riskLevel === "higher" || /press|bench|pull-up|dip|row|squat|deadlift|rdl|split squat/i.test(exercise.name);
       if (!risk) return;
-      const target = targetRIRForExercise(exercise, log.weekInCycle);
-      const upper = /setup/i.test(target) ? 3 : /0-1|0–1/.test(target) ? 2 : 2;
+      const target = targetRIRForExercise(exercise, weekForLog(log));
+      const range = target.match(/\d+(?:\.\d+)?/g)?.map(Number);
+      if (!range?.length) return;
+      const lower = Math.min(...range);
+      const upper = Math.max(...range);
       exerciseLog.sets.filter((set) => set.completed && validRirValue(set.rir)).forEach((set) => {
         valid += 1;
         const rir = numericValue(set.rir);
-        if (rir >= 0 && rir <= upper) targetMatched += 1;
+        if (rir >= lower && rir <= upper) targetMatched += 1;
         if (rir <= 0.25) riskyTooLow += 1;
       });
     });
@@ -1235,13 +1258,13 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
   const todayLogs = logs.filter((log) => log.date === date);
   const activeLog = todayLogs.find((log) => log.status === "draft") ?? todayLogs.find((log) => log.status === "completed");
   const activeDayKey = activeLog?.dayKey ?? scheduledDayKey;
-  const workout = getWorkoutByKey(activeDayKey);
+  const workout = activeLog ? workoutForLog(activeLog) : daysForDate(date)[activeDayKey];
   const weeklyWeightCount = data.bodyWeights.filter((entry) => getCycleInfo(startDate, entry.date).programWeek === cycle.programWeek).length;
   const weightLoggedToday = data.bodyWeights.some((entry) => entry.date === date);
   const weightSkippedToday = new Set(getGamificationSettings(data.settings).bodyWeightPromptSkips ?? []).has(date);
   const quests: DailyQuest[] = [];
 
-  if (isTrainingDay(activeDayKey)) {
+  if (workout.exercises.length) {
     const completed = activeLog?.status === "completed";
     quests.push({
       id: `complete-workout:${date}:${activeDayKey}`,
@@ -1253,7 +1276,7 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
       tone: "mission",
     });
 
-    const warmup = warmupCompletionSummary({ dayKey: activeDayKey, warmupLog: activeLog?.warmupLog });
+    const warmup = warmupCompletionSummary({ dayKey: activeDayKey, warmupLog: activeLog?.warmupLog, programId: activeLog?.programId ?? (cornellActive(date) ? CORNELL_ID : undefined) });
     if (warmup.generalTotal) {
       quests.push({
         id: `warmup:${date}:${activeDayKey}`,
@@ -1296,6 +1319,11 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
       progressTarget: 80,
       tone: "quality",
     });
+  } else if (cornellActive(date) && (!activeLog || activeLog.programId === CORNELL_ID)) {
+    const done = !!activeLog?.exerciseLogs.some((entry) => entry.cardio?.completed && !entry.skipped);
+    quests.push({ id: `cornell-conditioning:${date}`, title: activeDayKey === "sunday" ? "Optional easy aerobic base" : "Follow the ROTC session",
+      detail: activeDayKey === "sunday" ? "Full-sentence pace, or full rest if tired. Not required for weekly completion." : "Record actual work. No added intervals or strength PRs.",
+      completed: done, progressCurrent: done ? 1 : 0, progressTarget: 1, tone: "recovery" });
   } else {
     const restComplete = !!activeLog?.restDay?.completed;
     quests.push({
@@ -1321,10 +1349,10 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
     });
   }
 
-  const currentWeekCompleted = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey)).length;
+  const currentWeekCompleted = weekLogs.filter((log) => log.status === "completed" && isTrainingLog(log)).length;
   // Rep-target quests only make sense on training days — rest days must never
   // suggest lifting.
-  if (isTrainingDay(activeDayKey) && !quests.some((quest) => quest.tone === "progress") && currentWeekCompleted >= 1) {
+  if (workout.exercises.length && !cornellActive(date) && !quests.some((quest) => quest.tone === "progress") && currentWeekCompleted >= 1) {
     const comparableExercise = workout.exercises.find((exercise) =>
       !!previousExercisePerformance(data.workoutLogs, date, exercise),
     );
@@ -1345,14 +1373,20 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
 
 export function buildWeeklyChallenge(data: AppData, date = todayISO()): WeeklyChallenge {
   const { cycle, weekLogs } = currentWeekContext(data, date);
-  const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey));
+  if (cornellActive(date)) {
+    const complete = new Set(weekLogs.filter((log) => log.programId === CORNELL_ID && log.status === "completed" && isTrainingLog(log)).map((log) => log.dayKey));
+    const done = trainingDaysForDate(date).filter((day) => complete.has(day)).length;
+    return { id: `cornell-four:${cycle.programWeek}`, title: "Four-day foundation", detail: "Two upper + two lower sessions. Sunday is optional; ROTC is not an extra gym requirement.", completed: done === 4,
+      progressCurrent: done, progressTarget: 4, nextStep: done === 4 ? "Foundation complete. Recover for ROTC." : "Follow the next planned session. No catch-up volume required." };
+  }
+  const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingLog(log));
   const avgLogging = completedTraining.length
     ? Math.round(completedTraining.reduce((sum, log) => sum + loggingQualityForWorkout(log), 0) / completedTraining.length)
     : 0;
   const lowerComplete = scheduledWorkoutComplete(weekLogs, "tuesday", cycle.programWeek);
   const vTarget = plannedSetTargetForMuscles(["lats", "side-delts"]);
   const vDone = completedSetCountForMuscles(weekLogs, ["lats", "side-delts"]);
-  const restViolations = weekLogs.filter((log) => !isTrainingDay(log.dayKey) && completedSetCount(log) > 0).length;
+  const restViolations = weekLogs.filter((log) => !isTrainingLog(log) && completedSetCount(log) > 0).length;
   const rirStats = safeRirSetStats(weekLogs);
 
   if (!lowerComplete && completedTraining.length > 0) {
@@ -1413,7 +1447,7 @@ export function buildWeeklyChallenge(data: AppData, date = todayISO()): WeeklyCh
 export function buildPlayerStatus(data: AppData, summary: Pick<GamificationSummary, "level" | "executionScore" | "streaks" | "achievements" | "prs">): PlayerStatus {
   const { cycle, weekLogs } = currentWeekContext(data);
   const challenge = buildWeeklyChallenge(data);
-  const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingDay(log.dayKey));
+  const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingLog(log));
   const avgLogging = completedTraining.length
     ? Math.round(completedTraining.reduce((sum, log) => sum + loggingQualityForWorkout(log), 0) / completedTraining.length)
     : 0;
@@ -1443,9 +1477,9 @@ export function buildPlayerStatus(data: AppData, summary: Pick<GamificationSumma
   return {
     archetype,
     momentumStatus,
-    cycleLabel: `Cycle ${cycle.cycle} · Week ${cycle.weekInCycle} of 8`,
+    cycleLabel: cornellActive() ? `Cornell cycle · Week ${cornellWeek(today)} of 8` : `Cycle ${cycle.cycle} · Week ${cycle.weekInCycle} of 8`,
     nextUnlock: nextBadge ? `${nextBadge.title}: ${achievementProgressPreview(nextBadge).label}` : `Level ${summary.level.level + 1}: ${summary.level.xpToNext} XP away`,
-    weeklyProgress: `${completedTraining.length}/${trainingDayKeys.length} workouts this week`,
+    weeklyProgress: `${completedTraining.length}/${trainingDaysForDate().length} workouts this week`,
     reasons: [
       `${summary.executionScore.overall}/100 Lock-In Score`,
       `${avgLogging || summary.executionScore.logging}% logging quality`,
@@ -1485,7 +1519,8 @@ function calculateGamificationImpl(data: AppData): GamificationSummary {
 
 // Sum of the day-scoped XP events a perfect day can earn (streak/comeback
 // bonuses excluded because they depend on surrounding days).
-export function availableXPForDay(dayKey: DayKey): number {
+export function availableXPForDay(dayKey: DayKey, programId?: string): number {
+  if (programId === CORNELL_ID) return workoutForLog({ dayKey, programId }).exercises.length ? 170 : 0;
   if (!isTrainingDay(dayKey)) return 40;
   const workout = getWorkoutByKey(dayKey);
   return 100 + 40 + 30 + (workout.cardio?.length ? 15 : 0);
@@ -1500,7 +1535,7 @@ export function buildTodayMission(data: AppData, hasSyncIssue = false, summary?:
   const draft = todayLogs.find((log) => log.status === "draft");
   const completed = todayLogs.find((log) => log.status === "completed");
   const activeDayKey = draft?.dayKey ?? completed?.dayKey ?? scheduledDayKey;
-  const workout = workoutDays[activeDayKey];
+  const workout = (draft ?? completed) ? workoutForLog((draft ?? completed)!) : daysForDate(today)[activeDayKey];
   const gamification = summary ?? calculateGamification(data);
   const weeklyWeights = data.bodyWeights.filter((entry) => getCycleInfo(startDate, entry.date).programWeek === cycle.programWeek).length;
   const weightLoggedToday = data.bodyWeights.some((entry) => entry.date === today);
@@ -1516,6 +1551,16 @@ export function buildTodayMission(data: AppData, hasSyncIssue = false, summary?:
     availableXP: availableXPForDay(activeDayKey),
     focusCue,
   };
+  if (cornellActive(today) && (!draft && !completed || (draft ?? completed)?.programId === CORNELL_ID)) {
+    base.title = workout.title;
+    base.subtitle = `Cornell · Week ${cornellWeek(today)} of 8 · ${workout.subtitle}`;
+    base.availableXP = availableXPForDay(activeDayKey, CORNELL_ID);
+    base.focusCue = workout.intent ?? workout.subtitle;
+    if (hasSyncIssue) return { ...base, nextBestAction: "Check Cloud Sync", action: "sync" };
+    if (draft) return { ...base, nextBestAction: "Continue Workout", action: "continue-workout", workoutId: draft.id };
+    if (completed) return { ...base, nextBestAction: gamification.settings.seenRecaps.includes(completed.id) ? "View Progress" : "Review Recap", action: gamification.settings.seenRecaps.includes(completed.id) ? "progress" : "review-recap", workoutId: completed.id };
+    return { ...base, nextBestAction: workout.exercises.length ? "Start Workout" : activeDayKey === "sunday" ? "Optional easy session" : "Log ROTC session", action: "start-workout" };
+  }
   if (hasSyncIssue) return { ...base, nextBestAction: "Sync data so today starts clean.", action: "sync" };
   if (draft) return { ...base, nextBestAction: "Continue Workout", action: "continue-workout", workoutId: draft.id };
   if (completed && !gamification.settings.seenRecaps.includes(completed.id)) {

@@ -4669,3 +4669,17 @@ tr:last-child td {
   cursor: pointer;
   padding: 0.15rem 0;
 }
+/* Cornell program cues stay separate from the active set-entry surface. */
+.cornell-cycle-card { border-top: 3px solid #cf5c65; }
+.cornell-cycle-card p { max-width: 76ch; line-height: 1.6; }
+.cornell-cycle-card details { border-top: 1px solid #ffffff20; padding-top: 12px; }
+.cornell-cycle-card summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 650; }
+.cornell-cycle-card a { color: #8ecfff; text-underline-offset: 3px; }
+.cornell-rhythm { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin: 16px 0; }
+.cornell-rhythm > div { border-left: 3px solid #73818b; padding: 9px; background: #ffffff06; min-width: 0; }
+.cornell-rhythm .essential { border-color: #e3717a; }
+.cornell-rhythm span { display: block; color: #aab3bd; font-size: 12px; margin-bottom: 5px; }
+.cornell-rhythm strong { display: block; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.rest-timer-controls p { max-width: 260px; font-size: 12px; line-height: 1.45; }
+.next-session-guidance summary { min-height: 44px; display: flex; align-items: center; font-weight: 650; cursor: pointer; }
+@media (max-width: 700px) { .cornell-rhythm { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

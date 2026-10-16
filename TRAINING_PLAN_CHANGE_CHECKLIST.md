@@ -94,3 +94,12 @@ npx netlify build --context production
 ```
 
 Before deploying, verify `dist/config.js` contains non-empty Supabase URL and anon-key values without printing the key. Deploy only the complete production-context `dist`, then verify the live app, Cloud Sync panel, direct route refresh, and browser console.
+# Cornell version boundary
+
+- New `cornell-v1` workouts are separate from unversioned home-gym history.
+- Verify calibration/deload set counts, four essential days, optional Sunday,
+  fixed ROTC classification, and exact old-to-new DB performance references.
+- Run `node scripts/verify-cornell.mjs` after building in addition to existing tests.
+- Never change an old record's program marker or original settings start date.
+- Warm-ups and skipped work remain excluded from work-set metrics. Conditioning
+  does not create strength PRs or count as an essential lifting day.

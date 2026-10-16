@@ -21,10 +21,10 @@ export interface RestTimerState {
 let restTimerAudioContext: AudioContext | null = null;
 
 export const REST_TIMER_ALARM_PATTERN = [
-  { frequency: 880, start: 0, duration: 0.22, gain: 0.16 },
-  { frequency: 660, start: 0.28, duration: 0.22, gain: 0.15 },
-  { frequency: 880, start: 0.56, duration: 0.22, gain: 0.17 },
-  { frequency: 660, start: 0.84, duration: 0.34, gain: 0.16 },
+  { frequency: 880, start: 0, duration: 0.22, gain: 0.30 },
+  { frequency: 660, start: 0.28, duration: 0.22, gain: 0.28 },
+  { frequency: 880, start: 0.56, duration: 0.22, gain: 0.32 },
+  { frequency: 660, start: 0.84, duration: 0.34, gain: 0.30 },
 ] as const;
 
 export const REST_TIMER_REPEAT_MS = 1800;
@@ -32,7 +32,7 @@ export const REST_TIMER_REPEAT_MS = 1800;
 export function primeRestTimerAudio(): void {
   try {
     restTimerAudioContext ??= new AudioContext();
-    void restTimerAudioContext.resume();
+    void restTimerAudioContext.resume().catch(() => {});
   } catch {
     // Audio is optional; the visual timer and vibration still work.
   }
@@ -42,7 +42,7 @@ function playRestTimerAlarm(): void {
   try {
     restTimerAudioContext ??= new AudioContext();
     const context = restTimerAudioContext;
-    void context.resume();
+    void context.resume().catch(() => {});
     const start = context.currentTime;
     REST_TIMER_ALARM_PATTERN.forEach((pulse, index) => {
       const oscillator = context.createOscillator();
@@ -86,6 +86,7 @@ export function RestTimer({
 }) {
   // The 1 Hz tick lives here so the logger tree doesn't re-render every second.
   const [now, setNow] = useState(() => Date.now());
+  const [notificationStatus, setNotificationStatus] = useState("");
   const vibratedForRef = useRef<number | null>(null);
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -107,6 +108,9 @@ export function RestTimer({
   useEffect(() => {
     if (!done) return;
     dismissButtonRef.current?.focus();
+    if (vibratedForRef.current !== timer.endsAt && document.visibilityState === "hidden" && "Notification" in window && Notification.permission === "granted") {
+      try { new Notification("Rest complete", { body: "Your next set is ready. Open the tracker to dismiss the alarm.", tag: "eli-rest-timer" }); } catch { /* Not supported on every mobile browser. */ }
+    }
     const ring = () => {
       if (document.visibilityState === "hidden") return;
       if (vibrateOnDone) navigator.vibrate?.([260, 100, 260]);
@@ -137,12 +141,25 @@ export function RestTimer({
           <button type="button" onClick={() => onAdjust(-30)} disabled={remaining <= 30}>-30s</button>
           <button type="button" onClick={() => onAdjust(30)}>+30s</button>
           <button type="button" onClick={onToggleSound}>Sound {soundOnDone ? "on" : "off"}</button>
+          <button type="button" onClick={() => { primeRestTimerAudio(); playRestTimerAlarm(); }}>Test alarm</button>
+          {"Notification" in window && <button type="button" onClick={async () => {
+            try { const permission = await Notification.requestPermission(); setNotificationStatus(permission === "granted" ? "Notifications allowed; background delivery depends on your browser." : "Notifications not allowed. The in-app alarm still works."); }
+            catch { setNotificationStatus("Notifications unavailable in this browser."); }
+          }}>Enable notification fallback</button>}
           <button type="button" onClick={onDismiss}>Dismiss</button>
         </div>
+        <p className="muted-copy">{notificationStatus || "Use media volume. Keep the app open for a reliable alarm; locked phones may suspend browser audio."}</p>
       </details>
     </div>
     {done && (
-      <div className="rest-alarm-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="rest-alarm-title">
+      <div className="rest-alarm-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="rest-alarm-title" onKeyDown={(event) => {
+        if (event.key === "Escape") onDismiss();
+        if (event.key === "Tab") {
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
+          const next = event.shiftKey ? buttons.at(-1) : buttons[0];
+          if ((!event.shiftKey && document.activeElement === buttons.at(-1)) || (event.shiftKey && document.activeElement === buttons[0])) { event.preventDefault(); next?.focus(); }
+        }
+      }}>
         <div className="rest-alarm-dialog">
           <div className="rest-alarm-pulse" aria-hidden="true" />
           <span>Timer finished</span>

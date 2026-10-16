@@ -335,3 +335,24 @@ The Routine page also lists movements to avoid before lifting: long static stret
 ## Production Restore Note
 
 If production renders as unstyled plain HTML, verify the deployed app shell before changing app data or Supabase settings. The likely cause is an incomplete `dist` upload, especially a missing `dist/src/styles.css` or vendor module files. Rebuild with `npx netlify build --context production`, confirm `dist/config.js` has non-empty Supabase values and `dist/src/styles.css` exists, then deploy with `npx netlify deploy --prod --dir=dist --no-build`.
+# Cornell cycle (2026-10-16)
+
+The current plan is a separate `cornell-v1` cycle for Helen Newman: Friday/Tuesday
+lower, Saturday/Wednesday upper, Sunday optional easy aerobic, Monday/Thursday
+fixed ROTC. See `CORNELL_CYCLE_RESEARCH.md` for prescriptions, equipment evidence,
+research, the critical review, recovery tradeoffs, and progression assumptions.
+The original routine remains available in Routine and resolves all unversioned
+historical logs. Original start dates, storage keys, auth and schema are unchanged.
+
+New log metadata: optional `programId` and `programStartDate` inside the existing
+workout JSON. Week-one calibration and week-eight deload create fewer future
+working sets; they never trim saved sets. Exact unchanged exercises display their
+latest confirmed performance, including old loads/notes, but new-cycle fields are
+not prefilled. A newer completed comparable session becomes the next reference.
+Different machines do not inherit old dumbbell/assistance PR baselines.
+
+Added verification: `node scripts/verify-cornell.mjs` after the build. Continue
+running `npm run typecheck`, `npm run build`, and `npm run test:progress`.
+For production use `npx netlify build --context production`, inspect non-empty
+correct-project `dist/config.js`, then `npx netlify deploy --prod --dir=dist --no-build`.
+Never deploy the empty-config output of an unconfigured local build.

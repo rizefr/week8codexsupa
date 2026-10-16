@@ -22,7 +22,8 @@ import {
   Trash2,
   Weight,
 } from "./components/icons";
-import { progressionSections, ruleSections, tableSections, trainingDayKeys, weeklySchedule, workoutDays } from "./data/routine";
+import { progressionSections, ruleSections, tableSections, weeklySchedule as legacySchedule, workoutDays as legacyWorkoutDays } from "./data/routine";
+import { CORNELL_ID, CORNELL_START, cornellActive, cornellWeek, daysForDate, exercisesForDate, isTrainingLog, trainingDaysForDate, weekForLog, workoutForLog } from "./data/cornell";
 import {
   doNotDoBeforeLifting,
   isWarmupComplete,
@@ -75,7 +76,6 @@ import {
   bestSetReps,
   bestTimedSet,
   getOrCreateLog,
-  isTrainingDay,
   loadIsAssistance,
   loadLabelForExercise,
   latestBodyWeight,
@@ -169,8 +169,12 @@ const mobileMoreItems: { page: Page; label: string; icon: typeof Home }[] = [
 ];
 
 const mobileMorePages = mobileMoreItems.map((item) => item.page);
+const workoutDays = daysForDate();
+const trainingDayKeys = trainingDaysForDate();
+const isTrainingDay = (key: DayKey) => trainingDayKeys.includes(key);
+const weeklySchedule = legacySchedule.map((item) => ({ ...item, workout: workoutDays[item.key].shortTitle }));
 
-const scheduleOverrideChoices: Array<{ dayKey: DayKey; label: string }> = [
+const legacyOverrideChoices: Array<{ dayKey: DayKey; label: string }> = [
   { dayKey: "monday", label: "Monday: Upper A" },
   { dayKey: "tuesday", label: "Tuesday: Lower + Abs" },
   { dayKey: "wednesday", label: "Wednesday: Delts + Arms" },
@@ -178,6 +182,9 @@ const scheduleOverrideChoices: Array<{ dayKey: DayKey; label: string }> = [
   { dayKey: "saturday", label: "Saturday: Specialization" },
   { dayKey: "thursday", label: "Rest / Recovery Check-In" },
 ];
+const scheduleOverrideChoices = cornellActive()
+  ? weeklySchedule.map((item) => ({ dayKey: item.key, label: `${item.day}: ${item.workout}` }))
+  : legacyOverrideChoices;
 
 function parseRoute(): Route {
   const raw = window.location.hash.replace(/^#\/?/, "");
@@ -217,7 +224,7 @@ function useCountUp(target: number, enabled: boolean, duration = 900): number {
     let frame = 0;
     const start = performance.now();
     const step = (now: number) => {
-      const t = Math.min(1, (now - start) / duration);
+      const t = Math.max(0, Math.min(1, (now - start) / duration));
       const eased = 1 - Math.pow(1 - t, 3);
       setValue(Math.round(target * eased));
       if (t < 1) frame = requestAnimationFrame(step);
@@ -1068,7 +1075,7 @@ function TopBar({
   const today = todayISO();
   const todayLog = data.workoutLogs.find((log) => log.date === today && log.status === "draft") ??
     data.workoutLogs.find((log) => log.date === today && log.status === "completed");
-  const workout = workoutDays[todayLog?.dayKey ?? dayKeyForDate(today)];
+  const workout = todayLog ? workoutForLog(todayLog) : workoutDays[dayKeyForDate(today)];
   const actionLabel = todayLog?.status === "draft" ? "Continue Workout" : todayLog?.status === "completed" ? "View Recap" : "Start Today";
   const action = () => {
     if (todayLog?.status === "completed") navigate("recap", todayLog.id);
@@ -1077,11 +1084,11 @@ function TopBar({
   return (
     <header className="top-bar">
       <div>
-        <p className="eyebrow">Program Week {cycleInfo.programWeek} · Cycle {cycleInfo.cycle}, Week {cycleInfo.weekInCycle} of 8</p>
+        <p className="eyebrow">{cornellActive(today) ? `Cornell cycle · Week ${cornellWeek(today)} of 8` : `Program Week ${cycleInfo.programWeek} · Cycle ${cycleInfo.cycle}, Week ${cycleInfo.weekInCycle} of 8`}</p>
         <h1>{workout.shortTitle}</h1>
         <span>
           {formatDate(today, { weekday: "long" })}
-          {settings.startDate ? ` from program start ${formatDate(settings.startDate)}` : " · start date will lock on first workout"}
+          {cornellActive(today) ? ` · new cycle from ${formatDate(CORNELL_START)}` : settings.startDate ? ` from program start ${formatDate(settings.startDate)}` : " · start date will lock on first workout"}
           {settings.status && settings.status !== "active" ? ` · ${settings.status}` : ""}
         </span>
       </div>
@@ -1166,7 +1173,7 @@ function Dashboard({
   const dailyQuests = gamification.dailyQuests;
   const weeklyChallenge = gamification.weeklyChallenge;
   const topMasteries = [...weeklyMuscleProgress].sort((a, b) => b.score - a.score).slice(0, 3);
-  const warmupSummary = todayLog ? warmupCompletionSummary(todayLog) : warmupCompletionSummary({ dayKey });
+  const warmupSummary = todayLog ? warmupCompletionSummary(todayLog) : warmupCompletionSummary({ dayKey, programId: cornellActive(today) ? CORNELL_ID : undefined });
   const warmupLabel = isTrainingDay(dayKey) ? "Warm-Up Available · 5-8 min" : "Rest-Day Posture Routine";
   const warmupActionLabel = todayLog ? "Open warm-up" : isTrainingDay(dayKey) ? "Start warm-up" : "View posture routine";
   const handleMissionAction = () => {
@@ -1517,7 +1524,7 @@ function Dashboard({
       </section>
 
       <div className="dashboard-row">
-        <ProgressRing value={(weekCompleted / Math.max(1, elapsedThisWeek || 1)) * 100} label="week done" />
+        <ProgressRing value={(weekCompleted / trainingDayKeys.length) * 100} label="week done" />
         <ProgressRing value={(cycleCompleted / cycleTarget) * 100} label="cycle done" />
       </div>
 
@@ -1525,15 +1532,15 @@ function Dashboard({
         <StatCard
           icon={CalendarDays}
           label="Workouts this week"
-          value={`${weekCompleted}/${Math.max(elapsedThisWeek, 1)} due`}
-          detail={`Program Week ${currentWeek}. Cycle ${cycleInfo.cycle}, Week ${cycleInfo.weekInCycle} of 8.`}
+          value={`${weekCompleted}/${trainingDayKeys.length} essential`}
+          detail={cornellActive(today) ? "Two upper + two lower sessions. Sunday is optional." : `Program Week ${currentWeek}. Cycle ${cycleInfo.cycle}, Week ${cycleInfo.weekInCycle} of 8.`}
           tone={weekCompleted >= elapsedThisWeek ? "success" : "warning"}
         />
         <StatCard
           icon={Dumbbell}
           label="This cycle"
           value={`${cycleCompleted}/${cycleTarget}`}
-          detail={`Cycle ${cycleInfo.cycle} workouts completed.`}
+          detail={cornellActive(today) ? "Cornell-cycle gym workouts completed." : `Cycle ${cycleInfo.cycle} workouts completed.`}
         />
         <StatCard
           icon={History}
@@ -1569,7 +1576,7 @@ function Dashboard({
               <button key={item.key} className={classNames("week-day", date === today && "today")} onClick={() => startWorkout(date)}>
                 <span>{item.day.slice(0, 3)}</span>
                 <strong>{workoutDays[item.key].shortTitle}</strong>
-                <small>{log ? "Done" : isTrainingDay(item.key) ? "Planned" : "Recover"}</small>
+                <small>{log ? "Logged" : isTrainingDay(item.key) ? "Essential" : cornellActive() && item.key !== "sunday" ? "Fixed ROTC" : "Optional"}</small>
               </button>
             );
           })}
@@ -1586,9 +1593,9 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
     data.workoutLogs.find((item) => item.date === today && item.status === "completed") ??
     data.workoutLogs.find((item) => item.date === today);
   const dayKey = todayLog?.dayKey ?? scheduledDayKey;
-  const workout = workoutDays[dayKey];
+  const workout = todayLog ? workoutForLog(todayLog) : workoutDays[dayKey];
   const log = todayLog;
-  const warmupSummary = log ? warmupCompletionSummary(log) : warmupCompletionSummary({ dayKey });
+  const warmupSummary = log ? warmupCompletionSummary(log) : warmupCompletionSummary({ dayKey, programId: cornellActive(today) ? CORNELL_ID : undefined });
   const briefing = buildNextWorkoutBriefing(data, today, dayKey);
   return (
     <div className="content-stack">
@@ -1626,7 +1633,8 @@ function TodayPage({ data, startWorkout }: { data: AppData; startWorkout: (date?
           <ScheduleOverrideChooser onChoose={(day) => startWorkout(today, day)} />
         </section>
       )}
-      <WorkoutDayDetail dayKey={dayKey} compact={false} />
+      {!log && cornellActive(today) && <CornellCycleCard />}
+      <WorkoutDayDetail dayKey={dayKey} compact={false} log={log} />
     </div>
   );
 }
@@ -1732,7 +1740,7 @@ function ShortOnTimeExerciseSelector({
   const rankById = new Map(options.map((option) => [option.exerciseId, option.rank]));
   const itemName = (exerciseId: string) => (
     findExercise(exerciseId)?.name ??
-    workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseId)?.name ??
+    workoutForLog(log).cardio?.find((item) => item.id === exerciseId)?.name ??
     exerciseNameForId(exerciseId)
   );
   const toggle = (exerciseId: string) => {
@@ -1881,15 +1889,15 @@ function WarmupChecklist({
   );
 }
 
-function WarmupRoutinePanel({ dayKey }: { dayKey: DayKey }) {
-  const general = warmupsForDay(dayKey, "general");
-  const preExercise = warmupsForDay(dayKey, "pre-exercise");
-  const restDay = !isTrainingDay(dayKey);
+function WarmupRoutinePanel({ dayKey, programId = cornellActive() ? CORNELL_ID : undefined }: { dayKey: DayKey; programId?: string }) {
+  const general = warmupsForDay(dayKey, "general", programId);
+  const preExercise = warmupsForDay(dayKey, "pre-exercise", programId);
+  const restDay = !general.length;
   const posture = restDay ? postureWarmups() : [];
   if (!general.length && !preExercise.length && !posture.length) return null;
   return (
     <details className="warmup-routine-panel">
-      <summary>{restDay ? "Rest-day posture / walk options" : "Warm-Up · 5-8 min"}</summary>
+      <summary>{restDay ? programId === CORNELL_ID ? "Optional posture after activity" : "Rest-day posture / walk options" : "Warm-Up · 5-8 min"}</summary>
       <div className="warmup-routine-body">
         {!!general.length && <WarmupReferenceList title="Pre-workout warm-up" drills={general} />}
         {!!preExercise.length && <WarmupReferenceList title="Do before matching exercises" drills={preExercise} />}
@@ -1916,6 +1924,9 @@ function WarmupReferenceList({ title, drills }: { title: string; drills: WarmupD
 
 function RoutinePage() {
   const [query, setQuery] = useState("");
+  const [legacy, setLegacy] = useState(false);
+  const workoutDays = legacy ? legacyWorkoutDays : daysForDate();
+  const weeklySchedule = legacySchedule.map((item) => ({ ...item, workout: workoutDays[item.key].shortTitle }));
   const lowerQuery = query.toLowerCase();
   const visibleDays = weeklySchedule.filter((day) => {
     const workout = workoutDays[day.key];
@@ -1930,14 +1941,17 @@ function RoutinePage() {
       <section className="panel routine-header">
         <div>
           <p className="eyebrow">Source of truth</p>
-          <h2>Eli’s Aesthetic Hypertrophy Cycle</h2>
-          <p>8-week cycle structure that repeats until you archive or reset it.</p>
+          <h2>{legacy ? "Original Home-Gym Cycle" : "Cornell Aesthetic Cycle"}</h2>
+          <p>{legacy ? "Historical reference. Existing logs retain this routine." : "Four essential lifts. Two ROTC sessions. One optional aerobic day. Helen Newman equipment."}</p>
+          <button type="button" className="secondary-action" onClick={() => setLegacy(!legacy)}>{legacy ? "View Cornell cycle" : "View original routine"}</button>
         </div>
         <label className="search-box">
           <Search size={18} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search exercises, muscles, rules" />
         </label>
       </section>
+
+      {!legacy && <CornellCycleCard />}
 
       <section className="panel">
         <div className="section-heading">
@@ -1957,7 +1971,7 @@ function RoutinePage() {
       </section>
 
       {visibleDays.map((item) => (
-        <WorkoutDayDetail key={item.key} dayKey={item.key} compact={false} />
+        <WorkoutDayDetail key={item.key} dayKey={item.key} compact={false} legacy={legacy} />
       ))}
 
       <section className="panel warmup-warning-panel">
@@ -1981,19 +1995,19 @@ function RoutinePage() {
           </div>
         </div>
         <div className="rule-grid">
-          {progressionSections.map((section) => (
+          {(legacy ? progressionSections : [{ id: "cornell-progression", title: "Calibrate, build, recover", items: workoutDays.friday.rules ?? [] }]).map((section) => (
             <RuleCard key={section.id} title={section.title} items={section.items} />
           ))}
         </div>
       </section>
 
-      {ruleSections.map((section) => (
+      {(legacy ? ruleSections : []).map((section) => (
         <section key={section.id} className="panel">
           <RuleCard title={section.title} items={section.items} />
         </section>
       ))}
 
-      {tableSections.map((section) => (
+      {(legacy ? tableSections : []).map((section) => (
         <section key={section.id} className="panel">
           <div className="section-heading">
             <div>
@@ -2029,11 +2043,28 @@ function RoutinePage() {
 
 function rirSummary(exercise: Exercise): string {
   const label = effortLabelForExercise(exercise);
+  if (exercise.id.startsWith("cn-")) return `${label}: ${targetRIRForExercise(exercise, cornellWeek(todayISO()))} · current week`;
   if (exercise.targetRIRByPhase) {
     if (label === "Control cue") return `${label}: ${exercise.effortCue ?? exercise.targetRIRByPhase.setup}`;
     return `${label} setup ${exercise.targetRIRByPhase.setup} · growth ${exercise.targetRIRByPhase.growth} · push ${exercise.targetRIRByPhase.push}`;
   }
   return `${label} ${targetRIRForExercise(exercise)}`;
+}
+
+function CornellCycleCard() {
+  const week = cornellWeek(todayISO());
+  return <section className="panel cornell-cycle-card">
+    <div className="section-heading"><div><p className="eyebrow">Helen Newman · 8-week block</p><h3>{week === 1 ? "Calibrate before you chase numbers" : week === 8 ? "Deload and review" : "Build without borrowing from ROTC"}</h3></div><span className="status-pill">Week {week}/8</span></div>
+    <div className="cornell-rhythm">{weeklySchedule.map((day) => <div key={day.key} className={isTrainingDay(day.key) ? "essential" : "optional"}><span>{day.day.slice(0, 3)}</span><strong>{day.workout}</strong></div>)}</div>
+    <p>{week === 1 ? "At most two work sets per exercise at about 3 RIR this week. Previous loads stay visible, but choose fresh starting loads." : week === 8 ? "Half the usual sets, rounded up, at 3-4 RIR. Keep the same movements and avoid testing maxes." : "Follow the planned sets. Add a clean rep before load; keep Wednesday pressing at 2 RIR before Thursday PT."}</p>
+    <details><summary>Running, recovery & nutrition</summary>
+      <p>Monday and Thursday ROTC already supply your running intensity. Sunday is optional: 15-20 minutes of conversational jog/walk, progressing toward 30 only when recovery is good. No pace target or gym intervals.</p>
+      <p>For a 15:50 two-mile effort, an even split is about 7:55 per mile. That is test pace, not easy pace. Avoid spending the first laps faster than you can sustain.</p>
+      <p>Use maintenance intake initially; consider a small surplus if strength and your weekly weight trend stall. Aim for about 1.6-2.2 g protein/kg/day. Watch weekly averages, not daily scale changes. Ab definition cannot be guaranteed by ab exercises alone.</p>
+      <p>Machine busy? Keep exercise identity honest: wait, change exercise order, or use the configured skip control. Do not enter another machine's load under this one.</p>
+      <p><a href="https://scl.cornell.edu/recreation/recreation/facility/helen-newman-fitness-center" target="_blank" rel="noreferrer">Cornell equipment list</a> · <a href="https://pubmed.ncbi.nlm.nih.gov/41343037/" target="_blank" rel="noreferrer">Volume evidence</a> · <a href="https://pubmed.ncbi.nlm.nih.gov/38970765/" target="_blank" rel="noreferrer">RIR evidence</a></p>
+    </details>
+  </section>;
 }
 
 function ExerciseHelpDisclosure({
@@ -2084,8 +2115,10 @@ function ExerciseHelpDisclosure({
   );
 }
 
-function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolean }) {
-  const workout = workoutDays[dayKey];
+function WorkoutDayDetail({ dayKey, compact, log, legacy = false }: { dayKey: DayKey; compact: boolean; log?: WorkoutLog; legacy?: boolean }) {
+  const workout = log ? workoutForLog(log) : legacy ? legacyWorkoutDays[dayKey] : workoutDays[dayKey];
+  const isCornell = log ? log.programId === CORNELL_ID : !legacy && cornellActive();
+  const visibleExercises = isCornell ? exercisesForDate(workout, log?.date ?? todayISO()) : workout.exercises;
   return (
     <section id={dayKey} className="panel workout-detail">
       <div className="section-heading">
@@ -2097,7 +2130,7 @@ function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolea
       </div>
       {workout.benchSetup && <div className="guidance-card">{workout.benchSetup}</div>}
       {workout.intent && <div className="guidance-card">{workout.intent}</div>}
-      <WarmupRoutinePanel dayKey={dayKey} />
+      <WarmupRoutinePanel dayKey={dayKey} programId={log ? log.programId ?? "legacy" : legacy ? "legacy" : CORNELL_ID} />
       {workout.restOptions && (
         <div className="rest-grid">
           {workout.restOptions.map((option) => (
@@ -2110,7 +2143,7 @@ function WorkoutDayDetail({ dayKey, compact }: { dayKey: DayKey; compact: boolea
       )}
       {!!workout.exercises.length && (
         <div className="exercise-list">
-          {workout.exercises.map((exercise, index) => (
+          {visibleExercises.map((exercise, index) => (
             <article key={exercise.id} className={classNames("exercise-card", exercise.supersetGroup && "superset-card")}>
               <div className="exercise-index">{exercise.superset ?? index + 1}</div>
               <div>
@@ -2199,12 +2232,12 @@ function LoggerPage({
     );
   }
 
-  const workout = workoutDays[log.dayKey];
-  const originalWorkout = log.isScheduleOverride ? workoutDays[log.scheduledDayKey ?? dayKeyForDate(log.date)] : undefined;
+  const workout = workoutForLog(log);
+  const originalWorkout = log.isScheduleOverride ? workoutForLog({ ...log, dayKey: log.scheduledDayKey ?? dayKeyForDate(log.date) }) : undefined;
   const updateLog = (mutator: (current: WorkoutLog) => WorkoutLog) => onSave(mutator(log));
   const loggingQuality = loggingQualityForWorkout(log);
   const prCount = gamification.prs.filter((pr) => pr.workoutId === log.id).length;
-  const possibleXP = availableXPForDay(log.dayKey);
+  const possibleXP = availableXPForDay(log.dayKey, log.programId);
   const briefing = buildNextWorkoutBriefing(data, log.date, log.dayKey);
   const handleSetCompleted = (exercise: Exercise) => {
     if (log.status !== "draft") return;
@@ -2237,15 +2270,15 @@ function LoggerPage({
       }),
     }));
   };
-  const primaryWarmups = isTrainingDay(log.dayKey) ? warmupsForDay(log.dayKey, "general") : postureWarmups();
-  const warmupTitle = isTrainingDay(log.dayKey) ? "Pre-Workout Warm-Up" : "Optional Posture Routine";
+  const primaryWarmups = isTrainingLog(log) ? warmupsForDay(log.dayKey, "general", log.programId) : postureWarmups();
+  const warmupTitle = isTrainingLog(log) ? "Pre-Workout Warm-Up" : "Optional Posture Routine";
   const toggleWarmup = (drillId: string, completed: boolean) => updateLog((current) => updateWarmupDrill(current, drillId, completed));
   const completeWorkout = () => {
     const completed = {
       ...log,
       status: "completed" as const,
       completedAt: new Date().toISOString(),
-      restDay: !isTrainingDay(log.dayKey)
+      restDay: !isTrainingLog(log) && !workout.cardio?.length
         ? log.restDay ?? { mode: "full-rest" as const, intensityNotes: "No lifting. Recovery respected.", completed: true }
         : log.restDay,
       exerciseLogs: log.exerciseLogs.map((exerciseLog) => ({
@@ -2269,7 +2302,7 @@ function LoggerPage({
           <p className="eyebrow">Workout logger</p>
           <h2>{log.workoutTitle}</h2>
           <p>
-            {formatDate(log.date, { weekday: "long", year: "numeric" })} · Program Week {log.week} · Cycle {log.cycle ?? Math.floor((log.week - 1) / 8) + 1}, Week {log.weekInCycle ?? ((log.week - 1) % 8) + 1} · {log.status}
+            {formatDate(log.date, { weekday: "long", year: "numeric" })} · {log.programId === CORNELL_ID ? `Cornell Week ${weekForLog(log)} of 8` : `Original program · Week ${log.week}`} · {log.status}
           </p>
           {originalWorkout && (
             <div className="override-note">
@@ -2293,7 +2326,7 @@ function LoggerPage({
         </div>
       </section>
 
-      {log.status === "draft" && isTrainingDay(log.dayKey) && (
+      {log.status === "draft" && isTrainingLog(log) && (
         <NextWorkoutBriefingPanel
           briefing={briefing}
           compact
@@ -2764,7 +2797,7 @@ function LogExerciseCard({
   onSetCompleted?: (exercise: Exercise) => void;
 }) {
   const exercise = findExercise(exerciseLog.exerciseId);
-  const cardio = workoutDays[log.dayKey].cardio?.find((item) => item.id === exerciseLog.exerciseId);
+  const cardio = workoutForLog(log).cardio?.find((item) => item.id === exerciseLog.exerciseId);
   const previous = exercise ? previousExercisePerformance(allLogs, log.date, exercise) : undefined;
   const itemName = exerciseLog.performedExerciseName ?? exercise?.name ?? cardio?.name ?? "Workout item";
   const hasEnteredData = exerciseLog.sets.some((set) => set.completed || set.reps || set.leftReps || set.rightReps || set.seconds || set.weight) || !!exerciseLog.cardio?.duration;
@@ -2928,13 +2961,13 @@ function LogExerciseCard({
   const trackingType = trackingTypeForExercise(exercise);
   const showLoad = shouldShowLoadInput(exercise);
   const loadLabel = loadLabelForExercise(exercise);
-  const rirTarget = targetRIRForExercise(exercise, log.weekInCycle);
+  const rirTarget = targetRIRForExercise(exercise, weekForLog(log));
   const showRir = rirRequiredForExercise(exercise);
   const effortLabel = effortLabelForExercise(exercise);
   const displayExerciseName = exerciseLog.performedExerciseName ?? exercise.name;
   const nextSession = nextSessionRecommendation(allLogs, log.date, exercise);
   const aliasLabel = exerciseAliasLabel(exercise);
-  const exerciseWarmups = preExerciseWarmupsForExercise(log.dayKey, exercise.id);
+  const exerciseWarmups = preExerciseWarmupsForExercise(log.dayKey, exercise.id, log.programId);
   const applyReplacement = (replacementName: string, reason: string) => {
     onChange({
       ...exerciseLog,
@@ -2966,7 +2999,7 @@ function LogExerciseCard({
           <p className="eyebrow">{exercise.target}</p>
           <h3>{displayExerciseName}</h3>
           <p>
-            {exercise.sets} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest} · {effortLabel} {rirTarget}
+            {exerciseLog.sets.length} x {exercise.reps ?? exercise.seconds} · Rest {exercise.rest} · {effortLabel} {rirTarget}
           </p>
           {exerciseLog.performedExerciseName && (
             <span className="focus-cue-tag">Replacement for {exercise.name}: {exerciseLog.replacementReason}</span>
@@ -2998,12 +3031,11 @@ function LogExerciseCard({
         </button>
       )}
       {!exerciseLog.performedExerciseName && (
-        <div className={classNames("next-session-guidance", `tone-${nextSession.kind}`)}>
-          <span>Next-session guidance</span>
-          <strong>{nextSession.title}</strong>
+        <details className={classNames("next-session-guidance", `tone-${nextSession.kind}`)}>
+          <summary>{nextSession.title}</summary>
           <p>{nextSession.detail}</p>
           <small>{nextSession.evidence}</small>
-        </div>
+        </details>
       )}
       {log.status === "draft" && (
         <details className="exercise-options">
@@ -3066,7 +3098,7 @@ function LogExerciseCard({
         {exerciseLog.sets.map((set) => (
           <div key={set.id} className="set-row">
             <div className="set-cell set-number"><span>Set</span><strong>{set.setNumber}</strong></div>
-            <div className="set-cell"><span>Target · {showRir ? `RIR ${targetRIRForSet(exercise, log.weekInCycle, set.setNumber)}` : rirTarget}</span><strong>{set.target}</strong></div>
+            <div className="set-cell"><span>Target · {showRir ? `RIR ${targetRIRForSet(exercise, weekForLog(log), set.setNumber)}` : rirTarget}</span><strong>{set.target}</strong></div>
             {showLoad && (
               <label className="set-cell">
                 <span>{loadLabel}</span>
@@ -3561,7 +3593,7 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
       const cycle = log.cycle ?? Math.floor((log.week - 1) / 8) + 1;
       const current = map.get(cycle) ?? { cycle, completed: 0, sets: 0, volume: 0 };
       if (log.status === "completed") {
-        current.completed += isTrainingDay(log.dayKey) ? 1 : 0;
+        current.completed += isTrainingLog(log) ? 1 : 0;
         current.sets += completedSetCount(log);
         current.volume += workoutVolume(log);
       }
@@ -3756,9 +3788,9 @@ function ProgressPage({ data, gamification, gamificationEnabled }: { data: AppDa
             <div key={week.week} className="weekly-bar">
               <span>W{week.week}</span>
               <div>
-                <i style={{ height: `${Math.max(6, (week.completed / 5) * 100)}%` }} />
+                <i style={{ height: `${Math.max(6, Math.min(100, (week.completed / week.scheduled) * 100))}%` }} />
               </div>
-              <strong>{week.completed}/5</strong>
+              <strong>{week.completed}/{week.scheduled}</strong>
               {week.warning && <AlertTriangle size={15} />}
             </div>
           ))}
@@ -4097,7 +4129,7 @@ function HistoryPage({ data, gamification, startWorkout }: { data: AppData; gami
                   <p>{formatDate(log.date, { weekday: "long", year: "numeric" })}</p>
                   {log.isScheduleOverride && (
                     <div className="override-note">
-                      Performed: {workoutDays[log.performedDayKey ?? log.dayKey].shortTitle} · Originally scheduled: {workoutDays[log.scheduledDayKey ?? dayKeyForDate(log.date)].shortTitle}
+                      Performed: {workoutForLog({ ...log, dayKey: log.performedDayKey ?? log.dayKey }).shortTitle} · Originally scheduled: {workoutForLog({ ...log, dayKey: log.scheduledDayKey ?? dayKeyForDate(log.date) }).shortTitle}
                     </div>
                   )}
                   <div className="exercise-meta">
