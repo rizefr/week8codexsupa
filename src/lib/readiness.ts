@@ -1,6 +1,6 @@
 import { AppData, DayKey, Exercise, ExerciseFlag, ExerciseFlagKind, ExerciseFlagSeverity, ExerciseLog, WorkoutLog } from "../types";
 import { workoutDays } from "../data/routine";
-import { CORNELL_ID, cornellActive, cornellDays, daysForDate, workoutForLog } from "../data/cornell";
+import { CORNELL_ID, cornellActive, cornellDays, cornellDaysV1, cornellDaysV2, daysForDate, workoutForLog } from "../data/cornell";
 import {
   exerciseSessions,
   findExercise,
@@ -160,16 +160,28 @@ const shortOnTimeByDay: Partial<Record<DayKey, ShortOnTimeOption[]>> = {
   ],
 };
 
-export function shortOnTimeGuidance(dayKey: DayKey, programId?: string): ShortOnTimeOption[] {
+export function shortOnTimeGuidance(dayKey: DayKey, programId?: string, planVersion = 3): ShortOnTimeOption[] {
   if (programId === CORNELL_ID) {
+    if (planVersion >= 3) {
+      const cuts: Partial<Record<DayKey, Array<[string, string]>>> = {
+        tuesday: [["cn3-tue-abs", "Friday abs and ROTC remain; this costs direct ab work."], ["cn3-tue-curl", "Wednesday and Saturday curls remain."], ["cn3-tue-fly", "Both weekly incline-press slots remain; upper chest and delts stay protected."]],
+        wednesday: [["cn3-wed-curl", "Two other direct curl slots remain."], ["cn3-wed-lateral", "Tuesday and Saturday side-delt slots remain."], ["cn3-wed-rear", "Rows provide indirect rear-delt work, but this removes the direct slot."]],
+        friday: [["cn3-fri-abs", "Tuesday abs and ROTC remain."], ["cn3-fri-extension", "Leg press preserves quad work; this reduces the already modest leg dose."], ["cn3-fri-calf", "Higher-tradeoff cut: this is the only direct calf slot. Keep it whenever possible."]],
+        saturday: [["cn3-sat-curl", "Tuesday and Wednesday curls remain."], ["cn3-sat-triceps", "Tuesday direct work and presses remain."], ["cn3-sat-row", "Wednesday rows remain; keep incline press and pull-ups for the main priorities."]],
+      };
+      return (cuts[dayKey] ?? []).map(([id, rationale], index) => ({ exerciseId: id, rank: index + 1,
+        title: cornellDays[dayKey].exercises.find((exercise) => exercise.id === id)!.name,
+        preferredAction: `Optional cut #${index + 1}; never automatic.`, rationale,
+        sourceRule: "Upper-priority weekly overlap and fatigue tradeoff" }));
+    }
     const choices: Partial<Record<DayKey, Array<[string, string]>>> = {
-      friday: [["cn-split-squat", "Leg press preserves the main quad/glute work; this removes the extra unilateral slot."], ["cn-cable-crunch", "Core still has Tuesday work and ROTC. This reduces direct ab-hypertrophy work."], ["cn-calf-a", "Tuesday retains calves, but removing this is a larger weekly calf-volume tradeoff."]],
+      friday: [["cn-split-squat", "Leg press preserves the main quad/glute work; this removes the extra unilateral slot."], ["cn-cable-crunch", "Core still has Tuesday work and ROTC. This reduces direct ab-hypertrophy work."], ["cn2-preacher-curl", "Three other curl slots remain this week; side-delt work stays protected."]],
       saturday: [["cn-incline-curl", "Pulling and Wednesday curls remain."], ["cn-cable-triceps", "Pressing and ROTC still train triceps; this costs the week's direct long-head work."], ["cn-pec-fly", "Both priority presses remain. This reduces chest-specific weekly volume."]],
       tuesday: [["cn-leg-extension", "Leg press and Friday split squats retain quad work."], ["cn-reverse-crunch", "Friday direct abs and ROTC remain."], ["cn-calf-b", "Friday calves remain; a higher-tradeoff cut."]],
       wednesday: [["cn-curl-b", "Saturday curls and all pulling remain."], ["cn-rear-delt", "Rows retain some rear-delt stimulus, but this removes direct work."], ["cn-seated-row", "Saturday rowing remains. Keep the pulldown for back width."]],
     };
     return (choices[dayKey] ?? []).map(([id, rationale], index) => ({ exerciseId: id, rank: index + 1,
-      title: cornellDays[dayKey].exercises.find((exercise) => exercise.id === id)!.name,
+      title: (cornellDaysV2[dayKey].exercises.find((exercise) => exercise.id === id) ?? cornellDaysV1[dayKey].exercises.find((exercise) => exercise.id === id))?.name ?? id,
       preferredAction: `Optional cut #${index + 1}; never automatic.`, rationale,
       sourceRule: "Cornell weekly coverage and fatigue tradeoff, not an exercise-effectiveness ranking" }));
   }
@@ -473,7 +485,7 @@ export function buildNextWorkoutBriefing(data: AppData, currentDate: string, day
     dayKey,
     deload,
     flagPatterns,
-    shortOnTime: shortOnTimeGuidance(dayKey, programId),
+    shortOnTime: shortOnTimeGuidance(dayKey, programId, activeLog?.planVersion ?? (activeLog ? 1 : 3)),
     tips: tips.slice(0, 3),
   };
 }

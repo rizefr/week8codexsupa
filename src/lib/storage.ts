@@ -229,7 +229,7 @@ function normalizeProgramFields(data: AppData): AppData {
     settings,
     workoutLogs: data.workoutLogs.map((log) => {
       const cycleInfo = getCycleInfo(startDate, log.date);
-      return { ...log, week: cycleInfo.programWeek, cycle: cycleInfo.cycle, weekInCycle: cycleInfo.weekInCycle };
+      return { ...log, week: log.week ?? cycleInfo.programWeek, cycle: log.cycle ?? cycleInfo.cycle, weekInCycle: log.weekInCycle ?? cycleInfo.weekInCycle };
     }),
   };
 }

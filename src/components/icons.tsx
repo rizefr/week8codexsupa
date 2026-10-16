@@ -228,3 +228,67 @@ export function Weight(props: IconProps) {
     </Icon>
   );
 }
+
+export function ChevronLeft(props: IconProps) {
+  return <Icon {...props}><path d="m15 18-6-6 6-6" /></Icon>;
+}
+
+export function ChevronRight(props: IconProps) {
+  return <Icon {...props}><path d="m9 18 6-6-6-6" /></Icon>;
+}
+
+export function ChevronDown(props: IconProps) {
+  return <Icon {...props}><path d="m6 9 6 6 6-6" /></Icon>;
+}
+
+export function Check(props: IconProps) {
+  return <Icon {...props}><path d="M20 6 9 17l-5-5" /></Icon>;
+}
+
+export function X(props: IconProps) {
+  return <Icon {...props}><path d="M18 6 6 18M6 6l12 12" /></Icon>;
+}
+
+export function Info(props: IconProps) {
+  return <Icon {...props}><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></Icon>;
+}
+
+export function Trophy(props: IconProps) {
+  return <Icon {...props}><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z" /><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" /></Icon>;
+}
+
+export function Ruler(props: IconProps) {
+  return <Icon {...props}><path d="M3 17 17 3l4 4L7 21l-4-4Z" /><path d="m7 13 2 2M10 10l2 2M13 7l2 2" /></Icon>;
+}
+
+export function Target(props: IconProps) {
+  return <Icon {...props}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></Icon>;
+}
+
+export function Zap(props: IconProps) {
+  return <Icon {...props}><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" /></Icon>;
+}
+
+export function Clock(props: IconProps) {
+  return <Icon {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></Icon>;
+}
+
+export function Minus(props: IconProps) {
+  return <Icon {...props}><path d="M5 12h14" /></Icon>;
+}
+
+export function Shuffle(props: IconProps) {
+  return <Icon {...props}><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></Icon>;
+}
+
+export function Footprints(props: IconProps) {
+  return <Icon {...props}><path d="M4 16v-2.4C4 11.5 3 10.5 3 8c0-2.7 1.5-6 4.5-6C9.4 2 10 3.8 10 5.5c0 3.1-2 5.7-2 8.7V16a2 2 0 1 1-4 0Z" /><path d="M20 20v-2.4c0-2.1 1-3.1 1-5.6 0-2.7-1.5-6-4.5-6C14.6 6 14 7.8 14 9.5c0 3.1 2 5.7 2 8.7V20a2 2 0 1 0 4 0Z" /></Icon>;
+}
+
+export function Sparkles(props: IconProps) {
+  return <Icon {...props}><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2" /></Icon>;
+}
+
+export function Lock(props: IconProps) {
+  return <Icon {...props}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></Icon>;
+}

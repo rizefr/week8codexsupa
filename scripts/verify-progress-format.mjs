@@ -293,7 +293,7 @@ const badges = unlockAchievements(emptyData, memory);
 const persisted = badges.find((badge) => badge.id === "ten-workouts");
 assert.ok(persisted?.unlocked, "Badge with a persisted unlock must stay unlocked.");
 assert.equal(persisted?.progressCurrent, persisted?.progressTarget);
-assert.equal(badges.length, 19, "15 original + 4 new badge definitions.");
+assert.equal(badges.length, 23, "15 original + 4 earlier + 4 v2 badge definitions.");
 
 // weeklySummaries no longer pads new programs out to 8 empty weeks.
 assert.equal(weeklySummaries([], { startDate: todayISO(), status: "active" }).length, 1);

@@ -1,10 +1,11 @@
 import { AppData, BodyWeightLog, DayKey, Exercise, ExerciseLog, GamificationSettings, ProgramSettings, SetLog, WorkoutLog } from "../types";
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
-import { CORNELL_ID, CORNELL_START, cornellActive, cornellWeek, daysForDate, exercisesForDate, isTrainingLog, trainingDaysForDate, weekForLog, workoutForLog } from "../data/cornell";
+import { CORNELL_ID, CORNELL_START, cornellActive, cornellWeek, daysForDate, exercisesForDate, isOptionalStrengthLog, isTrainingLog, prescriptionWeekForLog, trainingDaysForDate, workoutForLog } from "../data/cornell";
 import { warmupCompletionSummary } from "../data/warmups";
 import { addDays, dayKeyForDate, daysSince, getCycleInfo, todayISO } from "./date";
 import {
   bestAssistance,
+  bestSessionStrength,
   bestSetReps,
   bestTimedSet,
   comparisonExerciseKey,
@@ -15,7 +16,10 @@ import {
   exerciseLogHasComparablePerformance,
   exerciseVolume,
   findExercise,
+  isCreditedSession,
+  isCreditedWorkout,
   isTrainingDay,
+  minRepTarget,
   numericValue,
   previousExercisePerformance,
   progressMetricValue,
@@ -67,11 +71,13 @@ export interface PRRecord {
   date: string;
   workoutId: string;
   exerciseName: string;
-  metric: "weight" | "reps-at-weight" | "total-reps" | "volume" | "timed" | "assistance" | "best-set";
+  metric: "weight" | "reps-at-weight" | "total-reps" | "volume" | "timed" | "assistance" | "best-set" | "strength";
   label: string;
   value: number;
   previous?: number;
   unit: string;
+  /** For load PRs: reps achieved at that load. */
+  repsAtValue?: number;
 }
 
 export interface StreakStats {
@@ -119,6 +125,9 @@ export interface Achievement {
   unlockedAt?: string;
   progressCurrent: number;
   progressTarget: number;
+  /** Retired goals stay earnable for history but are hidden until unlocked. */
+  hidden?: boolean;
+  tier?: "bronze" | "silver" | "gold";
 }
 
 export type PlayerArchetype =
@@ -162,6 +171,8 @@ export interface WeeklyChallenge {
 
 export type PRTierTitle =
   | "Baseline Established"
+  | "Strength PR"
+  | "Load PR"
   | "Rep PR"
   | "Volume PR"
   | "Assistance Improvement"
@@ -408,7 +419,7 @@ function completedTrainingDatesByWeek(logs: WorkoutLog[], week: number): Set<str
 function allScheduledWorkoutsComplete(logs: WorkoutLog[], week: number): boolean {
   const cornell = logs.filter((log) => log.week === week && log.programId === CORNELL_ID);
   if (cornell.length) {
-    const complete = cornell.filter((log) => log.status === "completed" && isTrainingLog(log));
+    const complete = cornell.filter(isCreditedWorkout);
     return new Set(complete.map((log) => log.date)).size >= 4 &&
       trainingDaysForDate(cornell[0].date).every((day) => complete.some((log) => log.dayKey === day));
   }
@@ -428,6 +439,7 @@ function detectPRsImpl(data: AppData): PRRecord[] {
   const bestBodyweightSet = new Map<string, number>();
   const bestAssistedRepsAtAssistance = new Map<string, number>();
   const bestLowAssistance = new Map<string, { assistance: number; totalReps: number }>();
+  const bestStrength = new Map<string, number>();
 
   const recordIfBetter = (
     key: string,
@@ -444,7 +456,34 @@ function detectPRsImpl(data: AppData): PRRecord[] {
   canonicalWorkoutLogs(data.workoutLogs)
     .filter((log) => log.status === "completed")
     .forEach((workout) => {
+      const strictPRs = workout.programId === CORNELL_ID && (workout.planVersion ?? 1) >= 2;
       workout.exerciseLogs.forEach((exerciseLog) => {
+        const startIndex = prs.length;
+        processExercise(workout, exerciseLog);
+        const added = prs.splice(startIndex);
+        if (!strictPRs) {
+          // Earlier logs keep their original PR set exactly (strength PRs are new).
+          prs.push(...added.filter((pr) => pr.metric !== "strength"));
+          return;
+        }
+        // v2: one meaningful PR per exercise per session. Volume and total-rep
+        // records are dropped because adding sets or lowering RIR inflates them.
+        const exercise = findExercise(exerciseLog.exerciseId);
+        const minReps = minRepTarget(exercise?.reps) ?? 1;
+        const eligible = added.filter((pr) => {
+          if (pr.metric === "volume" || pr.metric === "total-reps" || pr.metric === "reps-at-weight") return false;
+          if (pr.metric === "timed" && pr.id.endsWith(":total-seconds")) return false;
+          if (pr.metric === "weight") return (pr.repsAtValue ?? 0) >= minReps;
+          if (pr.metric === "strength") return pr.previous !== undefined && pr.value >= pr.previous * 1.01;
+          return true;
+        });
+        const priority: PRRecord["metric"][] = ["weight", "strength", "assistance", "best-set", "timed"];
+        const best = eligible.sort((a, b) => priority.indexOf(a.metric) - priority.indexOf(b.metric))[0];
+        if (best) prs.push(best);
+      });
+    });
+
+  function processExercise(workout: WorkoutLog, exerciseLog: ExerciseLog) {
         const exercise = findExercise(exerciseLog.exerciseId);
         if (!exercise || exerciseLog.skipped || exercise.prEligible === false) return;
         const name = exercise.name;
@@ -460,17 +499,39 @@ function detectPRsImpl(data: AppData): PRRecord[] {
           const loads = completedSets.map((set) => validLoadValue(set.weight)).filter(Boolean);
           const maxLoad = Math.max(0, ...loads);
           const unit = /db|dumbbell/i.test(name) ? "lb per DB" : "lb";
+          const repsAtMax = Math.max(0, ...completedSets.filter((set) => validLoadValue(set.weight) === maxLoad).map((set) => (
+            exercise.unilateral
+              ? Math.min(validRepValue(set.leftReps) || validRepValue(set.reps), validRepValue(set.rightReps) || validRepValue(set.reps))
+              : validRepValue(set.reps)
+          )));
           recordIfBetter(normalized, maxLoad, bestWeight, (previous) => ({
             id: `pr:${normalized}:${workout.date}:weight`,
             date: workout.date,
             workoutId: workout.id,
             exerciseName: name,
             metric: "weight",
-            label: `New best load: ${maxLoad} ${unit}`,
+            label: `New best load: ${maxLoad} ${unit} × ${repsAtMax}`,
             value: maxLoad,
             previous,
             unit,
+            repsAtValue: repsAtMax,
           }));
+          const strength = bestSessionStrength(exerciseLog, exercise);
+          if (strength.value > 0 && strength.set) {
+            const set = strength.set;
+            const reps = exercise.unilateral ? `${set.leftReps || set.reps}/${set.rightReps || set.reps}` : set.reps;
+            recordIfBetter(`${normalized}:strength`, Math.round(strength.value * 10) / 10, bestStrength, (previous) => ({
+              id: `pr:${normalized}:${workout.date}:strength`,
+              date: workout.date,
+              workoutId: workout.id,
+              exerciseName: name,
+              metric: "strength",
+              label: `${set.weight} ${unit} × ${reps}${set.rir ? ` @ ${set.rir} RIR` : ""} · est. ${Math.round(strength.value)} ${unit}`,
+              value: Math.round(strength.value * 10) / 10,
+              previous,
+              unit,
+            }));
+          }
 
           completedSets.forEach((set) => {
             const load = validLoadValue(set.weight);
@@ -621,8 +682,7 @@ function detectPRsImpl(data: AppData): PRRecord[] {
             unit: "total reps",
           }));
         }
-      });
-    });
+  }
 
   return prs.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 }
@@ -681,8 +741,9 @@ function buildXPEventsImpl(data: AppData): XPEvent[] {
   logs.forEach((log) => {
     const dayKey = log.dayKey;
     const resolved = workoutForLog(log);
-    const workout = log.programId === CORNELL_ID ? { ...resolved, exercises: exercisesForDate(resolved, log.date) } : resolved;
+    const workout = log.programId === CORNELL_ID ? { ...resolved, exercises: exercisesForDate(resolved, log.date, log.planVersion ?? 1) } : resolved;
     const isTraining = isTrainingLog(log);
+    const credited = isCreditedSession(log);
     const isCompleted = log.status === "completed";
     const hasEasyCardio = log.exerciseLogs.some((exerciseLog) => exerciseLog.cardio?.completed && !HARD_CARDIO_RE.test(exerciseLog.cardio?.intensityNotes ?? ""));
     const allExercisesComplete = workout.exercises.length > 0 && workout.exercises.every((exercise) => {
@@ -694,7 +755,11 @@ function buildXPEventsImpl(data: AppData): XPEvent[] {
       return !!exerciseLog && exerciseLogFullyLogged(exerciseLog, exercise.sets);
     });
 
-    if (isTraining && isCompleted) {
+    if (isOptionalStrengthLog(log) && credited && log.exerciseLogs.some((entry) => !entry.skipped && entry.sets.some((set) => set.completed))) {
+      add({ key: `optional-session:${log.date}`, kind: "workout", date: log.date, label: "Optional session complete", xp: 40, workoutId: log.id });
+    }
+
+    if (isTraining && isCompleted && credited) {
       add({ key: `workout-complete:${log.date}:${dayKey}`, kind: "workout", date: log.date, label: `${workout.shortTitle} complete`, xp: 100, workoutId: log.id });
       if (allExercisesComplete) {
         add({ key: `exercise-complete:${log.date}:${dayKey}`, kind: "logging", date: log.date, label: "Every planned exercise completed", xp: 40, workoutId: log.id });
@@ -759,7 +824,8 @@ function buildXPEventsImpl(data: AppData): XPEvent[] {
 function dailyActionDates(data: AppData): string[] {
   const dates = new Set<string>();
   canonicalWorkoutLogs(data.workoutLogs).forEach((log) => {
-    if (log.status === "completed" && isTrainingLog(log)) dates.add(log.date);
+    if (isCreditedWorkout(log)) dates.add(log.date);
+    if (isOptionalStrengthLog(log) && isCreditedSession(log)) dates.add(log.date);
     if (log.restDay?.completed) dates.add(log.date);
     if (log.exerciseLogs.some((exerciseLog) => !exerciseLog.skipped && exerciseLog.cardio?.completed)) dates.add(log.date);
   });
@@ -770,7 +836,7 @@ function dailyActionDates(data: AppData): string[] {
 export const calculateStreaks = memoizeByInput(calculateStreaksImpl);
 function calculateStreaksImpl(data: AppData): StreakStats {
   const logs = canonicalWorkoutLogs(data.workoutLogs);
-  const completedTrainingDates = logs.filter((log) => log.status === "completed" && isTrainingLog(log)).map((log) => log.date).sort();
+  const completedTrainingDates = logs.filter(isCreditedWorkout).map((log) => log.date).sort();
   const actionDates = dailyActionDates(data);
   const startDate = effectiveProgramStartDate(data.settings, data.workoutLogs);
   const today = todayISO();
@@ -857,10 +923,10 @@ export function calculateExecutionScore(data: AppData): ExecutionScore {
   const lookbackWeeks = Array.from({ length: Math.min(8, currentWeek) }, (_, index) => currentWeek - index).filter((week) => week > 0);
   const relevantLogs = logs.filter((log) => lookbackWeeks.includes(log.week));
   const dueTrainingDays = lookbackWeeks.reduce((sum, week) => sum + trainingDaysForDate(weekDates(startDate, week).at(-1) ?? today).length, 0);
-  const completedTraining = relevantLogs.filter((log) => log.status === "completed" && isTrainingLog(log)).length;
+  const completedTraining = relevantLogs.filter(isCreditedWorkout).length;
   const consistency = scorePercent(completedTraining, Math.max(1, dueTrainingDays));
 
-  const completedLogs = relevantLogs.filter((log) => log.status === "completed" && isTrainingLog(log));
+  const completedLogs = relevantLogs.filter(isCreditedWorkout);
   const logging = completedLogs.length
     ? Math.round(completedLogs.reduce((sum, log) => sum + loggingQualityForWorkout(log), 0) / completedLogs.length)
     : 70;
@@ -922,7 +988,7 @@ export function generateDailyActivity(data: AppData): DailyActivity[] {
     const dayLogs = logs.filter((log) => log.date === date);
     const dayXP = xpEvents.filter((event) => event.date === date).reduce((sum, event) => sum + event.xp, 0);
     const hasPR = prs.some((pr) => pr.date === date);
-    const completed = dayLogs.some((log) => log.status === "completed" && isTrainingLog(log));
+    const completed = dayLogs.some((log) => isCreditedWorkout(log) || (isOptionalStrengthLog(log) && isCreditedSession(log)));
     const started = dayLogs.some((log) => log.status === "draft" && isTrainingLog(log));
     const rest = dayLogs.some((log) => log.restDay?.completed);
     const conditioning = dayLogs.some((log) => log.programId === CORNELL_ID && log.status === "completed" && log.exerciseLogs.some((entry) => !entry.skipped && entry.cardio?.completed));
@@ -948,7 +1014,7 @@ export function generateDailyActivity(data: AppData): DailyActivity[] {
 
 export function unlockAchievements(data: AppData, memory: GamificationSettings): Achievement[] {
   const logs = canonicalWorkoutLogs(data.workoutLogs);
-  const completedWorkouts = logs.filter((log) => log.status === "completed" && isTrainingLog(log));
+  const completedWorkouts = logs.filter(isCreditedWorkout);
   const prs = detectPRs(data);
   const streaks = calculateStreaks(data);
   const xpEvents = buildXPEvents(data);
@@ -968,6 +1034,20 @@ export function unlockAchievements(data: AppData, memory: GamificationSettings):
   const cornellCycleCount = Math.max(0, ...Array.from(cornellCycles.values(), (dates) => dates.size));
   const useCornellCycle = cornellActive() && cornellCycleCount / 32 >= legacyCycleCount / 40;
 
+  const strengthPRs = prs.filter((pr) => pr.metric === "strength" || pr.metric === "weight" || pr.metric === "assistance").length;
+  const sideDeltWeeks = new Map<string, number>();
+  logs.filter((log) => log.programId === CORNELL_ID && log.status === "completed").forEach((log) => {
+    const week = `${getCycleInfo(log.programStartDate ?? CORNELL_START, log.date).programWeek}`;
+    log.exerciseLogs.forEach((entry) => {
+      if (entry.skipped) return;
+      const exercise = findExercise(entry.exerciseId);
+      if (exercise?.muscleGroups?.[0] !== "side-delts") return;
+      sideDeltWeeks.set(week, (sideDeltWeeks.get(week) ?? 0) + entry.sets.filter((set) => set.completed).length);
+    });
+  });
+  const bestSideDeltWeek = Math.max(0, ...sideDeltWeeks.values());
+  const measuredEntries = data.bodyWeights.filter((entry) => (entry.waistIn ?? 0) > 0 && (entry.shouldersIn ?? 0) > 0).length;
+
   const definitions: Array<Omit<Achievement, "unlocked" | "unlockedAt">> = [
     { id: "first-workout", title: "First Workout Logged", description: "Complete your first scheduled workout.", progressCurrent: completedWorkouts.length, progressTarget: 1 },
     { id: "perfect-logging-day", title: "Perfect Logging Day", description: "Complete a workout with every set fully logged.", progressCurrent: completedWorkouts.some((log) => loggingQualityForWorkout(log) >= 100) ? 1 : 0, progressTarget: 1 },
@@ -976,18 +1056,22 @@ export function unlockAchievements(data: AppData, memory: GamificationSettings):
     { id: "ten-workouts", title: "10 Workouts Completed", description: "Complete 10 scheduled workouts.", progressCurrent: completedWorkouts.length, progressTarget: 10 },
     { id: "twenty-five-workouts", title: "25 Workouts Completed", description: "Complete 25 scheduled workouts.", progressCurrent: completedWorkouts.length, progressTarget: 25 },
     { id: "first-full-week", title: "First Full Week Completed", description: "Complete every scheduled workout in a program week.", progressCurrent: fullWeeks.length, progressTarget: 1 },
-    { id: "seven-day-checkin", title: "7-Day Check-In Streak", description: "Build a 7-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 7 },
-    { id: "fourteen-day-checkin", title: "14-Day Check-In Streak", description: "Build a 14-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 14 },
-    { id: "rest-day-discipline", title: "Rest Day Discipline", description: "Complete 4 recovery/rest check-ins.", progressCurrent: logs.filter((log) => log.restDay?.completed).length, progressTarget: 4 },
-    { id: "first-cycle", title: "First Cycle Completed", description: useCornellCycle ? "Complete 32 essential workouts in a Cornell cycle." : "Complete 40 scheduled workouts in an original cycle.", progressCurrent: useCornellCycle ? cornellCycleCount : legacyCycleCount, progressTarget: useCornellCycle ? 32 : 40 },
+    { id: "upper-priority-week", title: "Cap Builder", description: "Log 10+ side-delt sets in one program week.", progressCurrent: bestSideDeltWeek, progressTarget: 10, tier: "silver" },
+    { id: "strength-pr-5", title: "Stronger Every Block", description: "Bank 5 strength PRs (effort-adjusted).", progressCurrent: strengthPRs, progressTarget: 5, tier: "silver" },
+    { id: "v-taper-tracked", title: "V-Taper Tracked", description: "Log shoulder and waist measurements twice.", progressCurrent: measuredEntries, progressTarget: 2, tier: "bronze" },
+    { id: "four-perfect-weeks", title: "Month of Execution", description: "Complete all four essentials in 4 program weeks.", progressCurrent: fullWeeks.length, progressTarget: 4, tier: "gold" },
+    { id: "seven-day-checkin", title: "7-Day Check-In Streak", description: "Build a 7-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 7, hidden: true },
+    { id: "fourteen-day-checkin", title: "14-Day Check-In Streak", description: "Build a 14-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 14, hidden: true },
+    { id: "rest-day-discipline", title: "Rest Day Discipline", description: "Complete 4 recovery/rest check-ins.", progressCurrent: logs.filter((log) => log.restDay?.completed).length, progressTarget: 4, hidden: true },
+    { id: "first-cycle", title: "First Cycle Completed", description: useCornellCycle ? "Complete 32 essential workouts in a Cornell cycle." : "Complete 40 scheduled workouts in an original cycle.", progressCurrent: useCornellCycle ? cornellCycleCount : legacyCycleCount, progressTarget: useCornellCycle ? 32 : 40, tier: "gold" },
     { id: "body-weight-tracker", title: "Body Weight Tracker", description: "Log body weight 8 times.", progressCurrent: bodyWeightDates(data.bodyWeights).size, progressTarget: 8 },
     { id: "no-missed-week", title: "No Missed Workouts This Week", description: "Finish a program week with no missed scheduled workouts.", progressCurrent: fullWeeks.includes(currentWeek) ? 1 : 0, progressTarget: 1 },
     { id: "comeback-workout", title: "Comeback Workout", description: "Return after missing multiple days.", progressCurrent: comeback ? 1 : 0, progressTarget: 1 },
     { id: "clean-execution-week", title: "Clean Execution Week", description: "Finish a week without hard-cardio or rest-day lifting flags.", progressCurrent: cleanWeeks, progressTarget: 1 },
-    { id: "fifty-workouts", title: "50 Workouts Completed", description: "Complete 50 scheduled workouts.", progressCurrent: completedWorkouts.length, progressTarget: 50 },
-    { id: "pr-hunter", title: "PR Hunter", description: "Bank 10 conservative PRs.", progressCurrent: prs.length, progressTarget: 10 },
-    { id: "twenty-one-day-checkin", title: "21-Day Check-In Streak", description: "Build a 21-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 21 },
-    { id: "quarter-million-club", title: "250K Volume Club", description: "Log 250,000 lb of lifetime working volume.", progressCurrent: Math.round(completedWorkouts.reduce((sum, log) => sum + workoutVolume(log), 0)), progressTarget: 250000 },
+    { id: "fifty-workouts", title: "50 Workouts Completed", description: "Complete 50 scheduled workouts.", progressCurrent: completedWorkouts.length, progressTarget: 50, tier: "gold" },
+    { id: "pr-hunter", title: "PR Hunter", description: "Bank 10 PRs.", progressCurrent: prs.length, progressTarget: 10, tier: "silver" },
+    { id: "twenty-one-day-checkin", title: "21-Day Check-In Streak", description: "Build a 21-day daily check-in streak.", progressCurrent: streaks.dailyCheckIn.best, progressTarget: 21, hidden: true },
+    { id: "quarter-million-club", title: "250K Volume Club", description: "Log 250,000 lb of lifetime working volume.", progressCurrent: Math.round(completedWorkouts.reduce((sum, log) => sum + workoutVolume(log), 0)), progressTarget: 250000, hidden: true },
   ];
 
   return definitions.map((badge) => {
@@ -1061,7 +1145,7 @@ function safeRirSetStats(logs: WorkoutLog[]) {
       if (!exercise) return;
       const risk = exercise.riskLevel === "higher" || /press|bench|pull-up|dip|row|squat|deadlift|rdl|split squat/i.test(exercise.name);
       if (!risk) return;
-      const target = targetRIRForExercise(exercise, weekForLog(log));
+      const target = targetRIRForExercise(exercise, prescriptionWeekForLog(log));
       const range = target.match(/\d+(?:\.\d+)?/g)?.map(Number);
       if (!range?.length) return;
       const lower = Math.min(...range);
@@ -1094,6 +1178,25 @@ export function achievementProgressPreview(badge: Achievement): AchievementPrevi
   };
 }
 
+/**
+ * Display helper: keep the single most meaningful PR per exercise per session.
+ * Historical logs can carry several record types for one lift; this only
+ * affects presentation, never stored data or XP.
+ */
+export function headlinePRs(prs: PRRecord[]): PRRecord[] {
+  // Load and effort-adjusted strength say the most about muscle gain; volume and
+  // total-rep records mostly reflect doing more sets.
+  const order: PRRecord["metric"][] = ["weight", "strength", "assistance", "reps-at-weight", "best-set", "timed", "total-reps", "volume"];
+  const rank = (pr: PRRecord) => order.indexOf(pr.metric);
+  const best = new Map<string, PRRecord>();
+  prs.forEach((pr) => {
+    const key = `${pr.workoutId}:${pr.exerciseName}`;
+    const current = best.get(key);
+    if (!current || rank(pr) < rank(current)) best.set(key, pr);
+  });
+  return Array.from(best.values()).sort((a, b) => b.date.localeCompare(a.date) || rank(a) - rank(b));
+}
+
 export function classifyPRTier(pr: PRRecord): { title: PRTierTitle; label: string } {
   if (pr.previous && pr.previous > 0) {
     const positiveGain = (pr.value - pr.previous) / pr.previous;
@@ -1107,6 +1210,8 @@ export function classifyPRTier(pr: PRRecord): { title: PRTierTitle; label: strin
       return { title: "Major PR", label: pr.label };
     }
   }
+  if (pr.metric === "strength") return { title: pr.previous && pr.value >= pr.previous * 1.05 ? "Major PR" : "Strength PR", label: pr.label };
+  if (pr.metric === "weight") return { title: "Load PR", label: pr.label };
   if (pr.metric === "volume") return { title: "Volume PR", label: pr.label };
   if (pr.metric === "assistance") return { title: "Assistance Improvement", label: pr.label };
   if (pr.metric === "timed") return { title: "Hold-Time PR", label: pr.label };
@@ -1206,6 +1311,16 @@ export function classifyExerciseResult(
     return { exerciseLogId: exerciseLog.id, exerciseName, state: "neutral", label: "Held steady", detail: "Assistance and reps stayed within the same range." };
   }
 
+  if (trackingType === "weighted-reps" && workout.programId === CORNELL_ID && (workout.planVersion ?? 1) >= 2) {
+    const now = bestSessionStrength(exerciseLog, exercise).value;
+    const before = bestSessionStrength(previous.exerciseLog, exercise).value;
+    if (now && before) {
+      const change = (now - before) / before;
+      if (change >= 0.015) return { exerciseLogId: exerciseLog.id, exerciseName, state: "improved", label: "Stronger", detail: `Effort-adjusted strength up ${Math.round(change * 100)}% vs last time.` };
+      if (change <= -0.04) return { exerciseLogId: exerciseLog.id, exerciseName, state: "regressed", label: "Dipped", detail: "Effort-adjusted strength dropped. Hold load next time." };
+      return { exerciseLogId: exerciseLog.id, exerciseName, state: "neutral", label: "Held steady", detail: "Matched last session at a similar effort." };
+    }
+  }
   const currentMetric = progressMetricValue(exerciseLog, exercise);
   const previousMetric = progressMetricValue(previous.exerciseLog, exercise);
   const tolerance = trackingType === "timed" ? 5 : trackingType === "weighted-reps" ? Math.max(25, previousMetric * 0.04) : 2;
@@ -1265,7 +1380,7 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
   const quests: DailyQuest[] = [];
 
   if (workout.exercises.length) {
-    const completed = activeLog?.status === "completed";
+    const completed = !!activeLog && isCreditedSession(activeLog);
     quests.push({
       id: `complete-workout:${date}:${activeDayKey}`,
       title: `Complete ${workout.shortTitle}`,
@@ -1295,8 +1410,8 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
       title: "Log all working sets cleanly",
       detail: "Weight/assistance, reps or seconds, and RIR where the movement uses it.",
       completed: quality >= 90,
-      progressCurrent: Math.min(90, quality),
-      progressTarget: 90,
+      progressCurrent: Math.min(100, quality),
+      progressTarget: 100,
       tone: "quality",
     });
 
@@ -1374,9 +1489,9 @@ export function buildDailyQuests(data: AppData, date = todayISO()): DailyQuest[]
 export function buildWeeklyChallenge(data: AppData, date = todayISO()): WeeklyChallenge {
   const { cycle, weekLogs } = currentWeekContext(data, date);
   if (cornellActive(date)) {
-    const complete = new Set(weekLogs.filter((log) => log.programId === CORNELL_ID && log.status === "completed" && isTrainingLog(log)).map((log) => log.dayKey));
+    const complete = new Set(weekLogs.filter((log) => log.programId === CORNELL_ID && isCreditedWorkout(log)).map((log) => log.dayKey));
     const done = trainingDaysForDate(date).filter((day) => complete.has(day)).length;
-    return { id: `cornell-four:${cycle.programWeek}`, title: "Four-day foundation", detail: "Two upper + two lower sessions. Sunday is optional; ROTC is not an extra gym requirement.", completed: done === 4,
+    return { id: `cornell-four:${cycle.programWeek}`, title: "Four-day foundation", detail: "All four essential sessions, each with most planned sets logged. Sunday is optional.", completed: done === 4,
       progressCurrent: done, progressTarget: 4, nextStep: done === 4 ? "Foundation complete. Recover for ROTC." : "Follow the next planned session. No catch-up volume required." };
   }
   const completedTraining = weekLogs.filter((log) => log.status === "completed" && isTrainingLog(log));
@@ -1510,7 +1625,7 @@ function calculateGamificationImpl(data: AppData): GamificationSummary {
     activities: generateDailyActivity(data),
     achievements,
     recentBadges: achievements.filter((badge) => badge.unlocked).sort((a, b) => (b.unlockedAt ?? "").localeCompare(a.unlockedAt ?? "")).slice(0, 4),
-    recentPRs: [...prs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5),
+    recentPRs: headlinePRs(prs).slice(0, 5),
     playerStatus: buildPlayerStatus(data, summarySeed),
     dailyQuests: buildDailyQuests(data),
     weeklyChallenge: buildWeeklyChallenge(data),
@@ -1594,7 +1709,14 @@ export function buildWorkoutRecap(workoutId: string, data: AppData): WorkoutReca
   const xpEvents = summary.xpEvents.filter((event) => event.workoutId === workoutId || (event.date === log.date && event.kind === "pr"));
   const xpEarned = xpEvents.reduce((sum, event) => sum + event.xp, 0);
   const prs = summary.prs.filter((pr) => pr.workoutId === workoutId);
-  const badgesUnlocked = summary.achievements.filter((badge) => badge.unlocked && !summary.settings.badgeUnlocks[badge.id]).slice(0, 3);
+  // A badge belongs to this recap if it was unlocked after the session began,
+  // whether or not the unlock has already been persisted to settings.
+  const sessionStart = log.startedAt ?? `${log.date}T00:00:00.000Z`;
+  const badgesUnlocked = summary.achievements.filter((badge) => {
+    if (!badge.unlocked) return false;
+    const persisted = summary.settings.badgeUnlocks[badge.id];
+    return !persisted || persisted >= sessionStart;
+  }).slice(0, 3);
   const loggingQuality = loggingQualityForWorkout(log);
   const workoutScore = Math.round(
     (log.status === "completed" ? 45 : 0) +

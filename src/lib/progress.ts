@@ -10,7 +10,7 @@ import {
   WorkoutLog,
 } from "../types";
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
-import { CORNELL_ID, CORNELL_START, cornellActive, cornellDays, cornellExercises, cornellWeek, daysForDate, exercisesForDate, isTrainingLog, trainingDaysForDate, weekForLog } from "../data/cornell";
+import { CORNELL_ID, CORNELL_PLAN_VERSION, CORNELL_START, cornellActive, cornellDays, cornellExercises, daysForDate, exercisesForDate, isCalibrationWeek, isTrainingLog, prescriptionWeekForDate, prescriptionWeekForLog, trainingDaysForDate } from "../data/cornell";
 import { addDays, dayKeyForDate, daysSince, getCycleInfo, getProgramWeek, todayISO } from "./date";
 
 export const allExercises = [...Object.values(workoutDays).flatMap((day) => day.exercises), ...cornellExercises];
@@ -102,8 +102,8 @@ export function trackingTypeForExercise(exercise?: Exercise): ExerciseTrackingTy
 }
 
 export function targetRIRForExercise(exercise: Exercise, weekInCycle = 1): string {
-  if (exercise.id.startsWith("cn-") && weekInCycle === 8 && rirRequiredForExercise(exercise)) return "3-4";
-  if (exercise.id.startsWith("cn-") && weekInCycle === 2 && rirRequiredForExercise(exercise)) return "2-3";
+  if (exercise.id.startsWith("cn") && weekInCycle === 8 && rirRequiredForExercise(exercise)) return "3-4";
+  if (exercise.id.startsWith("cn") && weekInCycle === 2 && rirRequiredForExercise(exercise)) return "2-3";
   const phase = programPhaseFromWeekInCycle(weekInCycle);
   const fallback = trackingTypeForExercise(exercise) === "timed" || trackingTypeForExercise(exercise) === "bodyweight-reps"
     ? "Stop when control breaks"
@@ -249,6 +249,7 @@ export function createWorkoutLog(date: string, settings: ProgramSettings, perfor
   const scheduledDayKey = dayKeyForDate(date);
   const dayKey = performedDayKey;
   const workout = daysForDate(date)[performedDayKey];
+  // Sunday's optional strength block is opt-in: pick run or pull + arms in the logger.
   const effectiveStartDate = settings.startDate || date;
   const cycleInfo = getCycleInfo(effectiveStartDate, date);
   const exerciseLogs: ExerciseLog[] = [
@@ -274,7 +275,7 @@ export function createWorkoutLog(date: string, settings: ProgramSettings, perfor
   ];
   return {
     id: createId("workout"),
-    ...(cornellActive(date) ? { programId: CORNELL_ID, programStartDate: CORNELL_START } : {}),
+    ...(cornellActive(date) ? { programId: CORNELL_ID, programStartDate: CORNELL_START, planVersion: CORNELL_PLAN_VERSION } : {}),
     date,
     week: cycleInfo.programWeek,
     cycle: cycleInfo.cycle,
@@ -365,6 +366,76 @@ export function bestSessionE1RM(log: ExerciseLog, exercise = findExercise(log.ex
   }, 0);
 }
 
+/** Planned working sets on non-skipped strength exercises, and how many were completed. */
+export function setCompletionForLog(log: WorkoutLog): { planned: number; completed: number; ratio: number } {
+  let planned = 0;
+  let completed = 0;
+  log.exerciseLogs.forEach((exerciseLog) => {
+    const exercise = findExercise(exerciseLog.exerciseId);
+    if (!exercise) return;
+    if (exerciseLog.skipped && (log.planVersion ?? 1) < 3) return;
+    planned += exerciseLog.sets.length;
+    if (!exerciseLog.skipped) completed += exerciseLog.sets.filter((set) => set.completed && ((log.planVersion ?? 1) < 3 || setInputsAreValid(set, exercise))).length;
+  });
+  return { planned, completed, ratio: planned ? completed / planned : 0 };
+}
+
+/** Minimum share of planned (non-skipped) sets a v2 session needs before it earns completion credit. */
+export const CREDIT_THRESHOLD = 0.75;
+
+/**
+ * Whether a completed log counts as a finished session for XP, streaks, badges and
+ * weekly completion. v2 Cornell logs must have most planned sets logged; earlier
+ * logs keep their original rule so history never loses credit retroactively.
+ */
+export function isCreditedSession(log: WorkoutLog): boolean {
+  if (log.status !== "completed") return false;
+  if (log.programId !== CORNELL_ID || (log.planVersion ?? 1) < 2) return true;
+  const { planned, ratio } = setCompletionForLog(log);
+  return planned > 0 && ratio >= CREDIT_THRESHOLD;
+}
+
+export function isCreditedWorkout(log: WorkoutLog): boolean {
+  return isTrainingLog(log) && isCreditedSession(log);
+}
+
+/**
+ * Strength estimate that accounts for effort: reps + reps-in-reserve approximates
+ * reps-to-failure, so 10 reps at 3 RIR and 12 reps at 1 RIR score the same. That
+ * keeps calibration weeks and RIR changes from masquerading as strength gains.
+ */
+export function rirAdjustedE1RM(weight: number, reps: number, rir?: string): number {
+  if (weight <= 0 || reps <= 0) return 0;
+  const reserve = validRirValue(rir) ? Math.min(5, Math.max(0, numericValue(rir))) : 0;
+  return weight * (1 + (reps + reserve) / 30);
+}
+
+function strengthRepsForSet(set: SetLog, exercise?: Exercise): number {
+  if (exercise?.unilateral) {
+    const left = validRepValue(set.leftReps);
+    const right = validRepValue(set.rightReps);
+    if (left && right) return Math.min(left, right);
+    return validRepValue(set.reps);
+  }
+  return validRepValue(set.reps);
+}
+
+/** Best effort-adjusted strength estimate in a session, with the set that produced it. */
+export function bestSessionStrength(log: ExerciseLog, exercise = findExercise(log.exerciseId)): { value: number; set?: SetLog } {
+  if (log.skipped || trackingTypeForExercise(exercise) !== "weighted-reps") return { value: 0 };
+  return log.sets.reduce<{ value: number; set?: SetLog }>((best, set) => {
+    if (!set.completed) return best;
+    const value = rirAdjustedE1RM(validLoadValue(set.weight), strengthRepsForSet(set, exercise), set.rir);
+    return value > best.value ? { value, set } : best;
+  }, { value: 0 });
+}
+
+export function minRepTarget(target?: string): number | null {
+  if (!target) return null;
+  const numbers = [...target.matchAll(/\d+/g)].map((match) => Number(match[0]));
+  return numbers.length ? Math.min(...numbers) : null;
+}
+
 export function completedExerciseCount(log: WorkoutLog): number {
   return log.exerciseLogs.filter((exerciseLog) => !exerciseLog.skipped && (exerciseLog.completed || exerciseLog.cardio?.completed)).length;
 }
@@ -374,12 +445,12 @@ export function totalProgramWorkouts(): number {
 }
 
 export function completedProgramWorkouts(logs: WorkoutLog[]): number {
-  return logs.filter((log) => log.status === "completed" && isTrainingLog(log)).length;
+  return logs.filter(isCreditedWorkout).length;
 }
 
 export function completedWorkoutsThisWeek(logs: WorkoutLog[], settings: ProgramSettings, date = todayISO()): number {
   const week = getProgramWeek(settings.startDate || date, date);
-  return new Set(logs.filter((log) => log.status === "completed" && log.week === week && isTrainingLog(log)).map((log) => log.date)).size;
+  return new Set(logs.filter((log) => log.week === week && isCreditedWorkout(log)).map((log) => log.date)).size;
 }
 
 export function plannedTrainingDaysElapsedThisWeek(settings: ProgramSettings, date = todayISO()): number {
@@ -438,7 +509,7 @@ export function refreshProgramFields(log: WorkoutLog, startDate: string): Workou
 export function completedWorkoutsInCurrentCycle(logs: WorkoutLog[], settings: ProgramSettings, date = todayISO()): number {
   if (cornellActive(date)) {
     const cycle = getCycleInfo(CORNELL_START, date).cycle;
-    return new Set(logs.filter((log) => log.programId === CORNELL_ID && log.status === "completed" && isTrainingLog(log) && getCycleInfo(log.programStartDate ?? CORNELL_START, log.date).cycle === cycle).map((log) => log.date)).size;
+    return new Set(logs.filter((log) => log.programId === CORNELL_ID && isCreditedWorkout(log) && getCycleInfo(log.programStartDate ?? CORNELL_START, log.date).cycle === cycle).map((log) => log.date)).size;
   }
   const cycle = getCycleInfo(settings.startDate || date, date).cycle;
   return logs.filter((log) => log.status === "completed" && isTrainingLog(log) && (log.cycle ?? Math.floor((log.week - 1) / 8) + 1) === cycle).length;
@@ -449,8 +520,8 @@ export function cycleWorkoutTarget(): number {
 }
 
 export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]): WorkoutLog {
-  // New-cycle calibration is deliberately blank, even when old loads exist.
-  if (log.programId === CORNELL_ID) return log;
+  // Calibration weeks (and every v1 Cornell log) stay deliberately blank.
+  if (log.programId === CORNELL_ID && ((log.planVersion ?? 1) < 2 || isCalibrationWeek(log.date, log.programStartDate))) return log;
   return {
     ...log,
     exerciseLogs: log.exerciseLogs.map((exerciseLog) => {
@@ -666,11 +737,12 @@ export function nextSessionRecommendation(
   currentDate: string,
   exercise: Exercise,
 ): NextSessionRecommendation {
-  if (exercise.id.startsWith("cn-") && [1, 8].includes(cornellWeek(currentDate))) {
-    return { kind: "hold", title: cornellWeek(currentDate) === 1 ? "Calibrate this week" : "Deload this week",
+  const currentWeek = prescriptionWeekForDate(currentDate);
+  if (exercise.id.startsWith("cn") && [1, 8].includes(currentWeek)) {
+    return { kind: "hold", title: currentWeek === 1 ? "Calibrate this week" : "Deload this week",
       detail: !shouldShowLoadInput(exercise)
         ? "Use the reduced planned sets. Stop when control breaks; progress clean reps, not added load."
-        : cornellWeek(currentDate) === 1 ? "Choose a load that leaves about 3 clean reps. Use the reduced planned sets; do not chase old numbers." : "Use half the normal sets at 3-4 RIR. No load increase this week.",
+        : currentWeek === 1 ? "Choose a load that leaves about 3 clean reps. Use the reduced planned sets; do not chase old numbers." : "Use half the normal sets at 3-4 RIR. No load increase this week.",
       evidence: "Current Cornell cycle prescription, not an inference from old performance." };
   }
   const sessions = exerciseSessions(logs, exercise).filter((session) => session.workout.date < currentDate);
@@ -730,7 +802,7 @@ export function nextSessionRecommendation(
   }
 
   const tooHard = rirRequiredForExercise(exercise) && latestSets.some((set) => {
-    const range = targetRirRange(targetRIRForSet(exercise, weekForLog(latest.workout), set.setNumber));
+    const range = targetRirRange(targetRIRForSet(exercise, prescriptionWeekForLog(latest.workout), set.setNumber));
     return !!range && validRirValue(set.rir) && numericValue(set.rir) < range.min;
   });
   if (tooHard) {
@@ -742,10 +814,10 @@ export function nextSessionRecommendation(
     };
   }
 
-  const hitTop = sessionMeetsTopRangeAndRir(latest.exerciseLog, exercise, weekForLog(latest.workout));
+  const hitTop = sessionMeetsTopRangeAndRir(latest.exerciseLog, exercise, prescriptionWeekForLog(latest.workout));
   const previous = sessions.at(-2);
   const repeatedTop = !!previous &&
-    sessionMeetsTopRangeAndRir(previous.exerciseLog, exercise, weekForLog(previous.workout)) &&
+    sessionMeetsTopRangeAndRir(previous.exerciseLog, exercise, prescriptionWeekForLog(previous.workout)) &&
     sessionLoadSignature(previous.exerciseLog, exercise) === sessionLoadSignature(latest.exerciseLog, exercise);
 
   if (trackingType === "weighted-reps" && hitTop && repeatedTop) {

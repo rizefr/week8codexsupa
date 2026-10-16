@@ -1,3 +1,20 @@
+# Cornell plan v2 (2026-10-16): upper-priority revision
+
+v2 keeps the four essential days and ROTC placement but adds side-delt and arm work to both
+leg days (Tuesday: lateral raise + overhead triceps; Friday: lateral raise + preacher curl),
+raises Wednesday rear-delt fly to 3 sets, and turns Sunday into an optional run **or**
+pull + arms session. Calibration now happens only in cycle 1, and isolation lifts may take the
+last set to 0-1 RIR in weeks 3-7. See `ENHANCEMENTS_V2.md` for the full table.
+
+Why not 1 lower + 3 upper days? With weekly sets equal, training frequency barely changes
+hypertrophy (Schoenfeld 2019; Pelland 2025), so the question is set allocation. Moving to
+3 upper days would add only ~6 upper sets versus v2, cut quad volume by about a third, leave
+legs untrained in any week Friday is missed, and put an upper session right after a PT push-up
+day. Delts and arms recover quickly, so placing them on leg days captures most of the
+upper-body benefit at little recovery cost.
+
+The v1 description below is kept as the historical record.
+
 # Cornell cycle: evidence, prescription, and critical review
 
 Reviewed 2026-10-16. This is an individualized programming synthesis, not a

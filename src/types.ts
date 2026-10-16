@@ -160,6 +160,14 @@ export interface ProgramSettings {
   completedAt?: string;
   updatedAt?: string;
   gamification?: GamificationSettings;
+  preferences?: AppPreferences;
+}
+
+export interface AppPreferences {
+  /** Keep the screen awake while a workout is open. */
+  keepAwake?: boolean;
+  /** Number of chimes when rest ends (0 = silent). */
+  restChimes?: number;
 }
 
 export interface GamificationSettings {
@@ -215,6 +223,9 @@ export interface ExerciseLog {
     incline?: string;
     speed?: string;
     intensityNotes?: string;
+    /** ROTC push-up work: hard sets (within ~3 reps of failure) and total reps. */
+    pushUpSets?: string;
+    pushUpReps?: string;
     completed: boolean;
   };
 }
@@ -224,6 +235,8 @@ export interface WorkoutLog {
   /** Missing means the original home-gym routine; never backfill old logs. */
   programId?: "cornell-v1";
   programStartDate?: string;
+  /** Cornell plan revision. Missing means v1; never backfill old logs. */
+  planVersion?: number;
   date: string;
   week: number;
   cycle?: number;
@@ -254,6 +267,11 @@ export interface BodyWeightLog {
   date: string;
   weight: number;
   bodyFatPercent?: number;
+  /** Optional tape measurements in inches. */
+  waistIn?: number;
+  shouldersIn?: number;
+  chestIn?: number;
+  armIn?: number;
   note?: string;
   updatedAt?: string;
 }

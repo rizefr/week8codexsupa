@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Minus, Plus, X } from "./icons";
 
 // Parses prescriptions like "2-3 min", "90 sec", "45-60 sec", or
 // "60-90 sec after 4B" to seconds, using the upper bound of ranges.
@@ -38,7 +39,7 @@ export function primeRestTimerAudio(): void {
   }
 }
 
-function playRestTimerAlarm(): void {
+export function playRestTimerAlarm(): void {
   try {
     restTimerAudioContext ??= new AudioContext();
     const context = restTimerAudioContext;
@@ -61,119 +62,114 @@ function playRestTimerAlarm(): void {
   }
 }
 
-function formatClock(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
+export function formatClock(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-export function RestTimer({
+const STORAGE_KEY = "cycle-tracker:rest-timer";
+
+/** Persist the running timer so an iOS tab reload or app switch keeps the countdown. */
+export function saveRestTimer(timer: RestTimerState | null) {
+  try {
+    if (timer) localStorage.setItem(STORAGE_KEY, JSON.stringify(timer));
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable in private mode; the in-memory timer still works.
+  }
+}
+
+export function loadRestTimer(): RestTimerState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RestTimerState;
+    // Drop timers that finished long ago (e.g. yesterday's session).
+    if (!parsed.endsAt || Date.now() - parsed.endsAt > 10 * 60 * 1000) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Docked rest timer. When rest ends it plays a short chime a limited number of
+ * times (no endless alarm, no modal), then shows how long you have overrun.
+ * Returning to the app well after the timer ended stays silent.
+ */
+export function RestDock({
   timer,
-  vibrateOnDone,
-  soundOnDone,
+  chimes,
   onAdjust,
-  onReset,
-  onToggleSound,
   onDismiss,
 }: {
   timer: RestTimerState;
-  vibrateOnDone: boolean;
-  soundOnDone: boolean;
+  chimes: number;
   onAdjust: (seconds: number) => void;
-  onReset: () => void;
-  onToggleSound: () => void;
   onDismiss: () => void;
 }) {
-  // The 1 Hz tick lives here so the logger tree doesn't re-render every second.
   const [now, setNow] = useState(() => Date.now());
-  const [notificationStatus, setNotificationStatus] = useState("");
-  const vibratedForRef = useRef<number | null>(null);
-  const dismissButtonRef = useRef<HTMLButtonElement>(null);
-
+  const chimedFor = useRef<number | null>(null);
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 500);
-    const refreshAfterBackground = () => setNow(Date.now());
-    document.addEventListener("visibilitychange", refreshAfterBackground);
-    window.addEventListener("pageshow", refreshAfterBackground);
+    const interval = window.setInterval(() => setNow(Date.now()), 250);
+    const refresh = () => setNow(Date.now());
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pageshow", refresh);
     return () => {
       window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshAfterBackground);
-      window.removeEventListener("pageshow", refreshAfterBackground);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pageshow", refresh);
     };
   }, []);
-
-  const remaining = Math.max(0, Math.ceil((timer.endsAt - now) / 1000));
-  const done = remaining <= 0;
+  const remainingMs = timer.endsAt - now;
+  const done = remainingMs <= 0;
+  const overrun = done ? Math.floor(-remainingMs / 1000) : 0;
 
   useEffect(() => {
-    if (!done) return;
-    dismissButtonRef.current?.focus();
-    if (vibratedForRef.current !== timer.endsAt && document.visibilityState === "hidden" && "Notification" in window && Notification.permission === "granted") {
-      try { new Notification("Rest complete", { body: "Your next set is ready. Open the tracker to dismiss the alarm.", tag: "eli-rest-timer" }); } catch { /* Not supported on every mobile browser. */ }
-    }
+    if (!done || chimedFor.current === timer.endsAt) return;
+    chimedFor.current = timer.endsAt;
+    // Only chime if the user is here within a few seconds of the end.
+    if (Date.now() - timer.endsAt > 10 * 60 * 1000 || chimes === 0) return;
+    let count = 0;
     const ring = () => {
-      if (document.visibilityState === "hidden") return;
-      if (vibrateOnDone) navigator.vibrate?.([260, 100, 260]);
-      if (soundOnDone) playRestTimerAlarm();
+      if (document.visibilityState !== "visible") return;
+      navigator.vibrate?.([200, 80, 200]);
+      playRestTimerAlarm();
+      count += 1;
     };
     ring();
-    vibratedForRef.current = timer.endsAt;
-    const interval = window.setInterval(ring, REST_TIMER_REPEAT_MS);
+    const interval = window.setInterval(() => {
+      if (chimes > 0 && count >= chimes) {
+        window.clearInterval(interval);
+        return;
+      }
+      ring();
+    }, REST_TIMER_REPEAT_MS);
     return () => window.clearInterval(interval);
-  }, [done, timer.endsAt, vibrateOnDone, soundOnDone]);
+  }, [done, timer.endsAt, chimes]);
 
-  const progress = timer.total > 0 ? Math.min(100, Math.max(0, ((timer.total - remaining) / timer.total) * 100)) : 100;
-
+  const progress = timer.total > 0 ? Math.min(1, Math.max(0, 1 - remainingMs / (timer.total * 1000))) : 1;
+  const radius = 19;
+  const circumference = 2 * Math.PI * radius;
   return (
-    <>
-    <div className={`rest-timer-chip${done ? " done" : ""}`} role="timer" aria-live={done ? "assertive" : "off"}>
-      <div className="rest-timer-ring" style={{ "--timer-progress": `${progress}%` } as React.CSSProperties}>
-        <strong>{done ? "Go" : formatClock(remaining)}</strong>
+    <div className={`rest-dock${done ? " is-done" : ""}`} role="timer" aria-live={done ? "polite" : "off"} aria-label={done ? "Rest complete" : `Resting, ${formatClock(remainingMs / 1000)} left`}>
+      <div className="rest-dock__ring" aria-hidden="true">
+        <svg width="46" height="46" viewBox="0 0 46 46">
+          <circle cx="23" cy="23" r={radius} className="rest-dock__track" />
+          <circle cx="23" cy="23" r={radius} className="rest-dock__fill" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - progress)} transform="rotate(-90 23 23)" />
+        </svg>
       </div>
-      <div className="rest-timer-copy">
-        <span>{done ? "Rest complete" : "Resting"}</span>
-        <strong>{done ? "Next set — stay tight" : `After ${timer.exerciseName}`}</strong>
+      <div className="rest-dock__text">
+        <strong className="rest-dock__time">{done ? `+${formatClock(overrun)}` : formatClock(Math.ceil(remainingMs / 1000))}</strong>
+        <span>{done ? "Rest done · next set" : `Rest · ${timer.exerciseName}`}</span>
       </div>
-      <details className="rest-timer-controls">
-        <summary aria-label="Rest timer controls">Controls</summary>
-        <div>
-          <button type="button" onClick={onReset}>{done ? "Start" : "Reset"}</button>
-          <button type="button" onClick={() => onAdjust(-30)} disabled={remaining <= 30}>-30s</button>
-          <button type="button" onClick={() => onAdjust(30)}>+30s</button>
-          <button type="button" onClick={onToggleSound}>Sound {soundOnDone ? "on" : "off"}</button>
-          <button type="button" onClick={() => { primeRestTimerAudio(); playRestTimerAlarm(); }}>Test alarm</button>
-          {"Notification" in window && <button type="button" onClick={async () => {
-            try { const permission = await Notification.requestPermission(); setNotificationStatus(permission === "granted" ? "Notifications allowed; background delivery depends on your browser." : "Notifications not allowed. The in-app alarm still works."); }
-            catch { setNotificationStatus("Notifications unavailable in this browser."); }
-          }}>Enable notification fallback</button>}
-          <button type="button" onClick={onDismiss}>Dismiss</button>
-        </div>
-        <p className="muted-copy">{notificationStatus || "Use media volume. Keep the app open for a reliable alarm; locked phones may suspend browser audio."}</p>
-      </details>
+      <div className="rest-dock__actions">
+        {!done && <button type="button" className="icon-btn" onClick={() => onAdjust(-30)} aria-label="Subtract 30 seconds"><Minus size={16} /></button>}
+        {!done && <button type="button" className="icon-btn" onClick={() => onAdjust(30)} aria-label="Add 30 seconds"><Plus size={16} /></button>}
+        <button type="button" className="icon-btn" onClick={onDismiss} aria-label={done ? "Dismiss timer" : "Skip rest"}><X size={16} /></button>
+      </div>
     </div>
-    {done && (
-      <div className="rest-alarm-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="rest-alarm-title" onKeyDown={(event) => {
-        if (event.key === "Escape") onDismiss();
-        if (event.key === "Tab") {
-          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
-          const next = event.shiftKey ? buttons.at(-1) : buttons[0];
-          if ((!event.shiftKey && document.activeElement === buttons.at(-1)) || (event.shiftKey && document.activeElement === buttons[0])) { event.preventDefault(); next?.focus(); }
-        }
-      }}>
-        <div className="rest-alarm-dialog">
-          <div className="rest-alarm-pulse" aria-hidden="true" />
-          <span>Timer finished</span>
-          <h2 id="rest-alarm-title">Rest complete</h2>
-          <p>Next set for {timer.exerciseName}. The alarm repeats until you dismiss it.</p>
-          <button ref={dismissButtonRef} type="button" className="primary-action rest-alarm-dismiss" onClick={onDismiss}>
-            Dismiss alarm
-          </button>
-          <button type="button" className="mini-action" onClick={onToggleSound}>
-            Sound {soundOnDone ? "on" : "off"}
-          </button>
-        </div>
-      </div>
-    )}
-    </>
   );
 }

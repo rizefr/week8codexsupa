@@ -1,6 +1,6 @@
 import { AppData, BodyWeightLog, Exercise, ExerciseLog, MuscleGroup, ReplacementOption, SetLog, WorkoutLog } from "../types";
 import { trainingDayKeys } from "../data/routine";
-import { isTrainingLog, trainingDaysForDate, weekForLog } from "../data/cornell";
+import { isTrainingLog, prescriptionWeekForLog, trainingDaysForDate } from "../data/cornell";
 import { warmupCompletionSummary } from "../data/warmups";
 import { addDays, getCycleInfo, todayISO } from "./date";
 import {
@@ -294,7 +294,7 @@ export function buildExerciseFeedback(exerciseLog: ExerciseLog, workout: Workout
     comparisonMessage(exerciseLog, workout, data, exercise),
     topRangeMessage(sets, exercise),
     setDropMessage(sets, exercise),
-    rirMessage(sets, exercise, weekForLog(workout)),
+    rirMessage(sets, exercise, prescriptionWeekForLog(workout)),
     movementSpecificInsight(exerciseLog, exercise),
   ].filter((item): item is CoachInsight => Boolean(item));
 
@@ -409,9 +409,7 @@ export function buildWorkoutCoachSummary(log: WorkoutLog, data: AppData, gamific
       prs.length ? `${prs.length} PR signal${prs.length === 1 ? "" : "s"}` : "baseline data strengthened",
       `${sets} sets completed`,
     ],
-    disciplineCue: gamification.settings.showDisciplineCues === false
-      ? ""
-      : "Training is done. Use the momentum: 25 focused minutes on outreach, site polish, planning, or one business action before scrolling.",
+    disciplineCue: "Recovery starts now: protein within a few hours, and protect tonight's sleep.",
     bodyParts,
   };
 }
@@ -471,7 +469,7 @@ export function buildDashboardCoachSummary(data: AppData, gamification: Gamifica
     disciplineCue: gamification.settings.showDisciplineCues === false
       ? `${Math.max(0, trainingDaysForDate().length - weekCompleted)} workout${trainingDaysForDate().length - weekCompleted === 1 ? "" : "s"} left for a strong week.`
       : weekCompleted >= trainingDaysForDate().length
-        ? "Week handled. Put the same discipline into one business action today."
+        ? "All four essentials done. Recover well for ROTC."
         : `${Math.max(0, trainingDaysForDate().length - weekCompleted)} workout${trainingDaysForDate().length - weekCompleted === 1 ? "" : "s"} left for a strong week.`,
     lockInReasons: [
       `${weekCompleted}/${trainingDaysForDate().length} workouts this week`,
@@ -487,9 +485,7 @@ export function buildNextBestActionCue(data: AppData, gamification: Gamification
   const todayLog = data.workoutLogs.find((log) => log.date === today && (log.status === "draft" || log.status === "completed"));
   if (todayLog?.status === "draft") return "You have a draft waiting. Continue it before starting anything else.";
   if (todayLog?.status === "completed") {
-    return gamification.settings.showDisciplineCues === false
-      ? "Workout done. Review the recap or check progress."
-      : "Workout done. Use the training momentum on one focused business task before scrolling.";
+    return "Workout done. Review the recap or check this week's muscle targets.";
   }
   if (gamification.level.xpToNext <= 100) return `${gamification.level.xpToNext} XP to Level ${gamification.level.level + 1}.`;
   return buildProgressionSuggestion(data);

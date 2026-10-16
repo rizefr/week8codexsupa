@@ -76,6 +76,7 @@ function writeSession(session: CloudSession): CloudSession {
   const claims = decodeJwt(session.access_token);
   const enriched = {
     ...session,
+    expires_at: session.expires_at ?? (typeof claims.exp === "number" ? claims.exp : undefined),
     user: {
       id: session.user?.id ?? (claims.sub as string | undefined),
       email: session.user?.email ?? (claims.email as string | undefined),
@@ -218,13 +219,11 @@ function requireUserId(session: CloudSession): string {
 
 export async function sendMagicLink(email: string): Promise<void> {
   lastCloudError = "";
-  await cloudFetch("/auth/v1/magiclink", {
+  const redirect = `${window.location.origin}${window.location.pathname}`;
+  await cloudFetch(`/auth/v1/magiclink?redirect_to=${encodeURIComponent(redirect)}`, {
     method: "POST",
     body: JSON.stringify({
       email,
-      options: {
-        redirectTo: `${window.location.origin}${window.location.pathname}`,
-      },
     }),
   });
 }
@@ -233,7 +232,7 @@ export async function signOutCloud(): Promise<void> {
   const session = readSession();
   clearSession();
   if (session?.access_token && isCloudConfigured()) {
-    await cloudFetch("/auth/v1/logout", { method: "POST" }, session).catch(() => undefined);
+    await cloudFetch("/auth/v1/logout?scope=local", { method: "POST" }, session).catch(() => undefined);
   }
 }
 

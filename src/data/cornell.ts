@@ -1,6 +1,6 @@
 import { DayKey, Exercise, MuscleGroup, WorkoutDay, WorkoutLog } from "../types";
 import { workoutDays as legacyDays, trainingDayKeys as legacyTrainingDays } from "./routine";
-import { daysSince, todayISO } from "../lib/date";
+import { addDays, daysSince, todayISO } from "../lib/date";
 
 // Versioned plan: never repurpose legacy exercise IDs or rewrite past logs.
 export const CORNELL_START = "2026-10-16";
@@ -71,7 +71,7 @@ function pt(key: "monday" | "thursday"): WorkoutDay {
     intent: "Follow your instructor's running and calisthenics. Record what actually happened; no extra intervals or gym lifting required.",
     cardio: [{ id: `cn-rotc-${key}`, name: "ROTC session", time: "Actual minutes", intensity: "Record actual intensity", notes: "Log running/calisthenics duration and details. This is not a recovery-day or strength PR." }] };
 }
-export const cornellDays: Record<DayKey, WorkoutDay> = {
+export const cornellDaysV1: Record<DayKey, WorkoutDay> = {
   monday: pt("monday"), tuesday: lowerB, wednesday: upperB, thursday: pt("thursday"), friday: lowerA, saturday: upperA,
   sunday: { key: "sunday", dayName: "Sunday", title: "Optional · Aerobic Base", shortTitle: "Optional aerobic",
     subtitle: "15-30 min · skip freely when tired", exercises: [],
@@ -79,19 +79,209 @@ export const cornellDays: Record<DayKey, WorkoutDay> = {
     cardio: [{ id: "cn-easy-aerobic", name: "Easy jog / walk", time: "15-30 min", intensity: "Easy, full-sentence conversational pace", notes: "After two comfortable weeks, add up to 5 minutes, capped at 30. Keep pace easy. Cycling is a lower-impact fallback." }],
     rules: ["No penalty for skipping this optional session.", "Feeling tired or sore? Full rest is the preferred alternative.", "A 15:50 two-mile pace is a test effort, not an easy-run target. Start controlled rather than sprinting the opening laps."] },
 };
-export const cornellExercises = Object.values(cornellDays).flatMap((workout) => workout.exercises);
+// ---------------------------------------------------------------------------
+// Cornell v2 · Upper-priority layout (2 lower + 2 upper, delts/arms on leg days)
+// New logs carry planVersion 2. Logs without it keep resolving to v1 above, so
+// history, PRs, and XP for earlier sessions never change retroactively.
+// ---------------------------------------------------------------------------
+export const CORNELL_PLAN_VERSION = 3;
+const isolationRIR = { setup: "3", growth: "1-2; 0-1", push: "1-2; 0-1" };
+const compoundRIR = { setup: "3", growth: "1-2", push: "1-2" };
+const steadyRIR = { setup: "3", growth: "2", push: "2" };
+const coreCue = { setup: "Stop when control breaks", growth: "Stop when control breaks", push: "Stop when control breaks" };
+
+function v2(base: Exercise, patch: Partial<Exercise>): Exercise {
+  return { ...base, ...patch };
+}
+function v2Day(key: DayKey, title: string, shortTitle: string, minutes: string, exercises: Exercise[], intent: string): WorkoutDay {
+  return { key, dayName: key[0].toUpperCase() + key.slice(1), shortTitle, title, exercises,
+    subtitle: `Essential · about ${minutes} min including warm-up`, intent,
+    rules: [
+      "Cycle 1, week 1 only: at most 2 working sets per exercise at about 3 RIR to calibrate loads.",
+      "Week 2: full sets at 2-3 RIR. Weeks 3-7: 1-2 RIR; isolation lifts may take the last set to 0-1 RIR.",
+      "Week 8: half the sets (rounded up) at 3-4 RIR, then start the next block at full sets.",
+      "Add reps first. After two comparable sessions at the top of the range and target RIR, add the smallest load step.",
+    ] };
+}
+const byId = (days: Record<DayKey, WorkoutDay>, id: string) => {
+  const found = Object.values(days).flatMap((day) => day.exercises).find((exercise) => exercise.id === id);
+  if (!found) throw new Error(`Missing v1 exercise: ${id}`);
+  return found;
+};
+const v1 = (id: string) => byId(cornellDaysV1, id);
+const pair = (group: string, label: string, first: Exercise, second: Exercise, firstRest: string, secondRest: string): [Exercise, Exercise] => [
+  { ...first, superset: `${label}A`, supersetGroup: group, supersetLabel: `Superset ${label}A / ${label}B · alternate`, rest: firstRest },
+  { ...second, superset: `${label}B`, supersetGroup: group, supersetLabel: `Superset ${label}A / ${label}B · alternate`, rest: secondRest },
+];
+
+const lateralTue = v2(v1("cn-lateral-b"), { id: "cn2-lateral-tue", sets: 3, reps: "12-20", targetRIRByPhase: isolationRIR,
+  notes: "Lead with the elbows, slight forward path, relaxed neck. Reps before load." });
+const tricepsTue = v2(v1("cn-cable-triceps"), { id: "cn2-oh-triceps-tue", comparisonExerciseId: "cn-cable-triceps", sets: 3, targetRIRByPhase: isolationRIR,
+  notes: "Rope or bar overhead, elbows forward, deep but pain-free stretch. Main triceps slot of the week." });
+const lateralFri = v2(v1("cn-lateral-a"), { id: "cn2-lateral-fri", sets: 3, reps: "12-20", targetRIRByPhase: isolationRIR,
+  notes: "Fourth side-delt exposure of the week. Strict reps; stop before swinging." });
+const preacher = machine("cn2-preacher-curl", "Helen Newman Preacher Curl", 2, "10-15", ["biceps"],
+  "Armpits snug to the pad, full controlled lowering. Different strength curve from incline curls.");
+preacher.targetRIRByPhase = isolationRIR;
+
+const lowerBv2 = v2Day("tuesday", "Lower B · Posterior + Arms", "Lower B + Arms", "65-75", [
+  v2(v1("cn-rdl"), { targetRIRByPhase: steadyRIR }),
+  v2(v1("cn-leg-press-b"), { targetRIRByPhase: compoundRIR }),
+  v2(v1("cn-seated-curl-b"), { targetRIRByPhase: isolationRIR }),
+  v2(v1("cn-leg-extension"), { targetRIRByPhase: isolationRIR }),
+  ...pair("tue-4", "5", lateralTue, tricepsTue, "60-90 sec after 5B", "90 sec after 5A"),
+  ...pair("tue-6", "6", v2(v1("cn-calf-b"), { targetRIRByPhase: isolationRIR }), v2(v1("cn-reverse-crunch"), { targetRIRByPhase: coreCue }), "60-90 sec after 6B", "60 sec after 6A"),
+], "Legs first while fresh, then the upper-priority pair. Triceps here sit 48 h before Thursday push-ups.");
+
+const upperBv2 = v2Day("wednesday", "Upper B · Back + Delts", "Upper B", "60-70", [
+  v2(v1("cn-pulldown"), { targetRIRByPhase: compoundRIR }),
+  v2(v1("cn-chest-press"), { targetRIRByPhase: steadyRIR }),
+  v2(v1("cn-seated-row"), { targetRIRByPhase: compoundRIR }),
+  ...pair("wed-4", "4", v2(v1("cn-lateral-b"), { targetRIRByPhase: isolationRIR }), v2(v1("cn-curl-b"), { targetRIRByPhase: isolationRIR }), "60-90 sec after 4B", "60-90 sec after 4A"),
+  v2(v1("cn-rear-delt"), { sets: 3, targetRIRByPhase: isolationRIR }),
+], "Back width and delts lead. Chest press stays at 2 RIR the day before Thursday push-ups.");
+
+const lowerAv2 = v2Day("friday", "Lower A · Quads + Delts", "Lower A + Delts", "65-75", [
+  v2(v1("cn-leg-press-a"), { targetRIRByPhase: compoundRIR }),
+  v2(v1("cn-seated-curl-a"), { targetRIRByPhase: isolationRIR }),
+  v2(v1("cn-split-squat"), { targetRIRByPhase: steadyRIR }),
+  ...pair("fri-4", "4", v2(v1("cn-calf-a"), { targetRIRByPhase: isolationRIR }), v2(v1("cn-cable-crunch"), { targetRIRByPhase: compoundRIR }), "60-90 sec after 4B", "60-90 sec after 4A"),
+  ...pair("fri-5", "5", lateralFri, preacher, "60-90 sec after 5B", "60-90 sec after 5A"),
+], "Quads and hamstrings first. Thursday PT fatigue? Hold load. If time is short, drop the split squat before the delt pair.");
+
+const upperAv2 = v2Day("saturday", "Upper A · Chest + Width", "Upper A", "65-75", [
+  v2(v1("cn-incline-press"), { targetRIRByPhase: compoundRIR, muscleGroups: ["upper-chest", "chest", "front-delts", "triceps"] }),
+  v2(v1("cn-assisted-pullup"), { targetRIRByPhase: compoundRIR }),
+  v2(v1("cn-supported-row"), { targetRIRByPhase: compoundRIR }),
+  v2(v1("cn-lateral-a"), { targetRIRByPhase: isolationRIR }),
+  v2(v1("cn-pec-fly"), { targetRIRByPhase: isolationRIR }),
+  ...pair("sat-6", "6", v2(v1("cn-cable-triceps"), { targetRIRByPhase: isolationRIR }), v2(v1("cn-incline-curl"), { targetRIRByPhase: isolationRIR }), "60-90 sec after 6B", "60-90 sec after 6A"),
+], "Chest, lats and side delts. Work toward unassisted pull-ups; it is the clearest marker of back width.");
+
+const sundayPull = (id: string, base: string, sets: number, notes: string) => v2(v1(base), { id, sets, targetRIRByPhase: { setup: "3", growth: "2", push: "2" }, notes });
+const sundayV2: WorkoutDay = {
+  key: "sunday", dayName: "Sunday", title: "Optional · Run or Pull + Arms", shortTitle: "Optional",
+  subtitle: "Optional · pick one mode · skip freely when tired",
+  intent: "Run mode builds the 2-mile aerobic base. Pull + arms mode adds upper-priority volume with no pressing, so Monday push-ups stay fresh. Choose one, or rest.",
+  exercises: [
+    { ...sundayPull("cn2-sun-pulldown", "cn-pulldown", 2, "Smooth reps at 2 RIR. Bonus volume, not a test."), comparisonExerciseId: "cn-pulldown" },
+    { ...sundayPull("cn2-sun-row", "cn-seated-row", 2, "Controlled reach and squeeze."), comparisonExerciseId: "cn-seated-row" },
+    ...pair("sun-3", "3", sundayPull("cn2-sun-lateral", "cn-lateral-b", 3, "Strict, light, pump-quality reps."), { ...sundayPull("cn2-sun-rear-delt", "cn-rear-delt", 2, "Shoulders down, smooth arc."), comparisonExerciseId: "cn-rear-delt" }, "60 sec after 3B", "60 sec after 3A"),
+    sundayPull("cn2-sun-curl", "cn-curl-b", 2, "Clean curls; stop before elbows complain."),
+  ],
+  cardio: [{ id: "cn-easy-aerobic", name: "Easy jog / walk", time: "15-30 min", intensity: "Easy, full-sentence conversational pace", notes: "Run mode. Add up to 5 min after two comfortable weeks, capped at 30. Keep pace easy." }],
+  rules: ["Optional: never required for weekly completion.", "Tired or sore? Full rest is the better choice.", "A 15:50 two-mile pace is test effort, not an easy-run pace."],
+};
+
+function ptV2(key: "monday" | "thursday"): WorkoutDay {
+  return { ...cornellDaysV1[key], intent: "Follow your instructor's session. Log the run and your push-up sets so the muscle map counts that chest and triceps work." };
+}
+
+export const cornellDaysV2: Record<DayKey, WorkoutDay> = {
+  monday: ptV2("monday"), tuesday: lowerBv2, wednesday: upperBv2, thursday: ptV2("thursday"), friday: lowerAv2, saturday: upperAv2, sunday: sundayV2,
+};
+/** The plan new logs use. */
+// Release revision: preserve both earlier plans; new IDs keep prescriptions isolated.
+function specialized(id: string, baseId: string, sets: number, notes?: string): Exercise {
+  const source = byId(cornellDaysV2, baseId);
+  return { ...source, id, sets, comparisonExerciseId: source.comparisonExerciseId,
+    superset: undefined, supersetGroup: undefined, supersetLabel: undefined,
+    rest: /after/.test(source.rest) ? "90 sec" : source.rest,
+    notes: notes ?? source.notes };
+}
+export const cornellDaysV3: Record<DayKey, WorkoutDay> = {
+  ...cornellDaysV2,
+  tuesday: v2Day("tuesday", "Upper A · Upper Chest + Arms", "Chest + Arms", "60-70", [
+    specialized("cn3-tue-incline", "cn-incline-press", 3, "Low incline, controlled depth. Keep 2 RIR after Monday push-ups; hold load if performance is down."),
+    specialized("cn3-tue-lateral", "cn2-lateral-tue", 3),
+    specialized("cn3-tue-fly", "cn-pec-fly", 2),
+    ...pair("cn3-tue-arms", "4", specialized("cn3-tue-triceps", "cn2-oh-triceps-tue", 3), specialized("cn3-tue-curl", "cn-incline-curl", 2), "90 sec after 4B", "90 sec after 4A"),
+    specialized("cn3-tue-abs", "cn-reverse-crunch", 2),
+  ], "Upper-chest priority, then delts and arms. Monday PT counts toward pressing fatigue: no failure or push-up finisher."),
+  wednesday: v2Day("wednesday", "Upper B · Back + Rear Delts", "Back + Delts", "60-70", [
+    specialized("cn3-wed-pulldown", "cn-pulldown", 3),
+    specialized("cn3-wed-row", "cn-seated-row", 3),
+    specialized("cn3-wed-rear", "cn-rear-delt", 3),
+    specialized("cn3-wed-lateral", "cn-lateral-b", 3),
+    specialized("cn3-wed-curl", "cn-curl-b", 2),
+  ], "No pressing before Thursday push-ups. Tuesday and Wednesday share delts/arms: leave 2 RIR when sore or reps fall."),
+  friday: v2Day("friday", "Lower · Efficient Foundation", "Lower", "65-75", [
+    specialized("cn3-fri-press", "cn-leg-press-a", 3),
+    specialized("cn3-fri-rdl", "cn-rdl", 2),
+    specialized("cn3-fri-curl", "cn-seated-curl-a", 3),
+    specialized("cn3-fri-extension", "cn-leg-extension", 2),
+    ...pair("cn3-fri-finish", "5", specialized("cn3-fri-calf", "cn-calf-a", 3), specialized("cn3-fri-abs", "cn-cable-crunch", 2), "90 sec after 5B", "90 sec after 5A"),
+  ], "One focused lower session preserves quad, hinge, knee-flexion and calf work. Thursday running fatigue? Reduce load or use the ranked cuts; do not grind."),
+  saturday: v2Day("saturday", "Upper C · Chest + Width", "Chest + Width", "65-75", [
+    specialized("cn3-sat-incline", "cn-incline-press", 3),
+    specialized("cn3-sat-pullup", "cn-assisted-pullup", 3),
+    specialized("cn3-sat-row", "cn-supported-row", 2),
+    specialized("cn3-sat-lateral", "cn-lateral-a", 3),
+    ...pair("cn3-sat-arms", "5", specialized("cn3-sat-triceps", "cn-cable-triceps", 2), specialized("cn3-sat-curl", "cn-incline-curl", 2), "90 sec after 5B", "90 sec after 5A"),
+  ], "Second upper-chest exposure plus back width. Keep the same incline and technique so history remains comparable."),
+  sunday: { ...sundayV2, title: "Optional · Easy Run or Recovery", shortTitle: "Optional",
+    intent: "Prefer 15-30 minutes of conversational jog/walk, or full rest. Pull + arms is only an alternative when recovered, not extra work to stack after Saturday.",
+    exercises: sundayV2.exercises.map((exercise) => ({ ...exercise, id: exercise.id.replace("cn2-", "cn3-"), sets: Math.min(2, exercise.sets ?? 2) })) },
+};
+cornellDaysV3.tuesday.exercises[0].targetRIRByPhase = steadyRIR;
+export const cornellDays = cornellDaysV3;
+export const OPTIONAL_DAY: DayKey = "sunday";
+export const ROTC_DAYS: DayKey[] = ["monday", "thursday"];
+
+const uniqueById = (list: Exercise[]) => Array.from(new Map(list.map((exercise) => [exercise.id, exercise])).values());
+// v1 first so legacy IDs resolve to their original definitions; v2-only IDs are appended.
+export const cornellExercises = uniqueById([
+  ...Object.values(cornellDaysV1).flatMap((workout) => workout.exercises),
+  ...Object.values(cornellDaysV2).flatMap((workout) => workout.exercises),
+  ...Object.values(cornellDaysV3).flatMap((workout) => workout.exercises),
+]);
 export function cornellActive(date = todayISO()): boolean { return date >= CORNELL_START; }
 export function daysForDate(date = todayISO()) { return cornellActive(date) ? cornellDays : legacyDays; }
-export function workoutForLog(log: Pick<WorkoutLog, "dayKey" | "programId">): WorkoutDay {
-  return (log.programId === CORNELL_ID ? cornellDays : legacyDays)[log.dayKey];
+export function cornellDaysForLog(log: Pick<WorkoutLog, "planVersion">): Record<DayKey, WorkoutDay> {
+  return (log.planVersion ?? 1) >= 3 ? cornellDaysV3 : (log.planVersion ?? 1) === 2 ? cornellDaysV2 : cornellDaysV1;
+}
+export function workoutForLog(log: Pick<WorkoutLog, "dayKey" | "programId"> & { planVersion?: number }): WorkoutDay {
+  return (log.programId === CORNELL_ID ? cornellDaysForLog(log) : legacyDays)[log.dayKey];
 }
 export function trainingDaysForDate(date = todayISO()): DayKey[] { return cornellActive(date) ? cornellTrainingDays : legacyTrainingDays; }
-export function isTrainingLog(log: Pick<WorkoutLog, "dayKey" | "programId">): boolean { return workoutForLog(log).exercises.length > 0; }
-export function cornellWeek(date: string, start = CORNELL_START): number { return Math.floor(Math.max(0, daysSince(start, date)) / 7) % 8 + 1; }
+/** Essential (scheduled) strength day. The optional Sunday session is strength work but not essential. */
+export function isTrainingLog(log: Pick<WorkoutLog, "dayKey" | "programId"> & { planVersion?: number }): boolean {
+  if (log.programId === CORNELL_ID && log.dayKey === OPTIONAL_DAY) return false;
+  return workoutForLog(log).exercises.length > 0;
+}
+export function isOptionalStrengthLog(log: Pick<WorkoutLog, "dayKey" | "programId"> & { planVersion?: number }): boolean {
+  return log.programId === CORNELL_ID && log.dayKey === OPTIONAL_DAY && workoutForLog(log).exercises.length > 0;
+}
+function cornellDayIndex(date: string, start = CORNELL_START): number {
+  return Math.max(0, daysSince(start, date));
+}
+export function cornellWeek(date: string, start = CORNELL_START): number { return Math.floor(cornellDayIndex(date, start) / 7) % 8 + 1; }
+export function cornellCycle(date: string, start = CORNELL_START): number { return Math.floor(cornellDayIndex(date, start) / 56) + 1; }
+/** First and last date of the Cornell program week containing `date`. */
+export function cornellWeekRange(date: string, start = CORNELL_START): { from: string; to: string } {
+  const offset = Math.floor(cornellDayIndex(date, start) / 7) * 7;
+  return { from: addDays(start, offset), to: addDays(start, offset + 6) };
+}
+export function isCalibrationWeek(date: string, start = CORNELL_START): boolean {
+  return cornellCycle(date, start) === 1 && cornellWeek(date, start) === 1;
+}
 export function weekForLog(log: WorkoutLog): number { return log.programId === CORNELL_ID ? cornellWeek(log.date, log.programStartDate) : log.weekInCycle ?? 1; }
-export function exercisesForDate(workout: WorkoutDay, date: string): Exercise[] {
-  const week = cornellWeek(date);
+/**
+ * Week used for effort prescriptions. v2 logs only calibrate in the first cycle;
+ * week 1 of later cycles uses the week-2 ramp instead of a second easy week.
+ */
+export function prescriptionWeekForDate(date: string, planVersion = CORNELL_PLAN_VERSION, start = CORNELL_START): number {
+  const week = cornellWeek(date, start);
+  if (planVersion >= 2 && week === 1 && !isCalibrationWeek(date, start)) return 2;
+  return week;
+}
+export function prescriptionWeekForLog(log: WorkoutLog): number {
+  if (log.programId !== CORNELL_ID) return log.weekInCycle ?? 1;
+  return prescriptionWeekForDate(log.date, log.planVersion ?? 1, log.programStartDate ?? CORNELL_START);
+}
+export function exercisesForDate(workout: WorkoutDay, date: string, planVersion = CORNELL_PLAN_VERSION): Exercise[] {
   if (!cornellActive(date)) return workout.exercises;
+  const week = prescriptionWeekForDate(date, planVersion);
   return workout.exercises.map((exercise) => ({ ...exercise,
     sets: week === 1 ? Math.min(2, exercise.sets ?? 1) : week === 8 ? Math.ceil((exercise.sets ?? 1) / 2) : exercise.sets }));
 }

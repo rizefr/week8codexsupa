@@ -35,7 +35,8 @@ export function dayKeyForDate(value: string): DayKey {
 export function getProgramWeek(startDate: string, date: string): number {
   const start = fromISODate(startDate || date);
   const current = fromISODate(date);
-  const diffDays = Math.floor((current.getTime() - start.getTime()) / 86400000);
+  // Round, not floor: a spring-forward DST day is only 23 hours long.
+  const diffDays = Math.round((current.getTime() - start.getTime()) / 86400000);
   return Math.max(1, Math.floor(diffDays / 7) + 1);
 }
 
@@ -68,5 +69,5 @@ export function formatDate(value: string, options?: Intl.DateTimeFormatOptions):
 }
 
 export function daysSince(startDate: string, date: string): number {
-  return Math.floor((fromISODate(date).getTime() - fromISODate(startDate || date).getTime()) / 86400000);
+  return Math.round((fromISODate(date).getTime() - fromISODate(startDate || date).getTime()) / 86400000);
 }

@@ -16,6 +16,7 @@ const mimeTypes = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
+  ".webmanifest": "application/manifest+json",
 };
 
 function safePath(urlPath) {
