@@ -14,6 +14,7 @@ import {
   nextSessionRecommendation,
   previousExercisePerformance,
   previousSessionNotes,
+  previousSetSummary,
   rirRequiredForExercise,
   setCompletionForLog,
   setHasRecordedPerformance,
@@ -224,6 +225,16 @@ function ExerciseCard({ ctx, log, exerciseLog, index, onChange, readOnly, onOpti
           <span><strong>{recommendation.title}.</strong> {recommendation.detail}</span>
         </div>
       )}
+      {previous && (
+        <section className="previous-session" aria-label={`Previous session for ${name}`}>
+          <div className="previous-session__heading">
+            <strong>Previous session</strong>
+            <time dateTime={previous.workout.date}>{formatDate(previous.workout.date, { month: "short", day: "numeric", year: "numeric" })}</time>
+          </div>
+          <p>{previousSetSummary({ ...previous.exerciseLog, sets: previous.exerciseLog.sets.filter((set) => set.completed && setHasRecordedPerformance(set, previous.exercise!)) }, previous.exercise)}</p>
+          {showLoad && <span>{loadLabelForExercise(previous.exercise)} · Reference only; follow today's effort target.</span>}
+        </section>
+      )}
       <div className="set-grid">
         <div className={cx("set-row", "is-head", `cols-${headerCols}`)} aria-hidden="true">
           <span>#</span>
@@ -240,7 +251,7 @@ function ExerciseCard({ ctx, log, exerciseLog, index, onChange, readOnly, onOpti
       {previous && !!previousSessionNotes(previous.exerciseLog, previous.workout).length && (
         <p className="faint small" style={{ marginTop: 8 }}>Last note ({formatDate(previous.workout.date)}): {previousSessionNotes(previous.exerciseLog, previous.workout)[0]}</p>
       )}
-      {!previous && !readOnly && <p className="faint small" style={{ marginTop: 8 }}>First time logging this movement. This session becomes the baseline.</p>}
+      {!previous && !readOnly && <p className="faint small" style={{ marginTop: 8 }}>No confirmed previous session for this movement. Your first completed session establishes the baseline.</p>}
     </Card>
   );
 }

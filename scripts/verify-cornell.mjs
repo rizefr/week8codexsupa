@@ -95,6 +95,21 @@ assert.equal(previousExercisePerformance([legacy, recent], '2026-10-24', press).
 assert.match(previousSetSummary(previousExercisePerformance([legacy, recent], '2026-10-24', press).exerciseLog, press), /35 lb/);
 assert.equal(previousExercisePerformance([legacy], saturday.date, findExercise('cn-chest-press')), undefined);
 assert.equal(JSON.stringify(legacy), preserved, 'Derived calculations cannot mutate history');
+
+// Retained movements use the latest confirmed history across program versions.
+const oldLateral = legacy.exerciseLogs.find((entry) => entry.exerciseId === 'monday-db-lateral-raise');
+oldLateral.sets.forEach((set) => Object.assign(set, { weight: '15', reps: '16', rir: '2', completed: true }));
+const emptyCurrentDraft = createWorkoutLog('2026-10-20', settings);
+for (const [currentId, oldId] of [['cn3-tue-incline', 'monday-low-incline-db-press'], ['cn3-tue-lateral', 'monday-db-lateral-raise']]) {
+  const currentExercise = findExercise(currentId);
+  const reference = previousExercisePerformance([legacy, emptyCurrentDraft], '2026-10-20', currentExercise);
+  assert.equal(reference.exerciseLog.exerciseId, oldId, 'An empty new draft must not hide real historical performance');
+  assert.ok(!previousSetSummary(reference.exerciseLog, reference.exercise).includes('- reps'));
+  const completedNew = finish(emptyCurrentDraft);
+  const latest = previousExercisePerformance([legacy, completedNew], '2026-10-27', currentExercise);
+  assert.equal(latest.workout.id, completedNew.id, 'A newer confirmed session replaces the old reference');
+}
+assert.equal(previousExercisePerformance([legacy], '2026-10-20', findExercise('saturday-db-lateral-raise-mechanical-set')), undefined, 'Mechanical sets remain a distinct movement');
 assert.notEqual(before, preserved, 'Test fixture deliberately has completed values');
 
 // ---- v2 program rules -------------------------------------------------------

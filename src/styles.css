@@ -2507,6 +2507,49 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+.pr-row .pr-row__icon {
+  display: grid;
+  place-items: center;
+  color: var(--gold);
+  align-self: flex-start;
+}
+
+.pr-row__icon > svg {
+  display: block;
+}
+
+.previous-session {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface-2);
+  border-radius: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.previous-session__heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.previous-session time,
+.previous-session > span {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.previous-session p {
+  margin: 6px 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
 .heat {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
