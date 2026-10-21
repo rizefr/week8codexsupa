@@ -3,7 +3,7 @@ import { BookOpen, History, Home, LineChart, MoreHorizontal, Ruler, Settings } f
 import { AppData, BodyWeightLog, DayKey, Exercise, ProgramSettings, WorkoutLog } from "./types";
 import { getCloudStatus, syncCloudNow } from "./lib/cloud";
 import { todayISO } from "./lib/date";
-import { effectiveProgramStartDate, getOrCreateLog, prefillWorkoutLogFromHistory, refreshProgramFields } from "./lib/progress";
+import { effectiveProgramStartDate, getOrCreateLog, prefillWorkoutLogFromHistory, refreshProgramFields, upgradeCurrentDraft } from "./lib/progress";
 import { createLocalBackup, defaultSettings, deleteWorkoutLog, loadAppData, saveAppData, saveBodyWeightLog, saveSettings, saveWorkoutLog, SaveResult } from "./lib/storage";
 import { calculateGamification, getGamificationSettings, mergeGamificationSettings } from "./lib/gamification";
 import { loadRestTimer, parseRestSeconds, primeRestTimerAudio, RestDock, RestTimerState, saveRestTimer } from "./components/RestTimer";
@@ -281,9 +281,9 @@ function App() {
     const requested = performedDayKey ? sameDay.filter((item) => item.dayKey === performedDayKey) : sameDay;
     const pick = (list: WorkoutLog[]) => list.find((item) => item.status === "draft") ?? list.find((item) => item.status === "completed") ?? list[0];
     const existing = pick(requested) ?? (performedDayKey ? undefined : pick(sameDay));
-    const log = existing ?? prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings, performedDayKey), data.workoutLogs);
+    const log = existing ? upgradeCurrentDraft(existing) : prefillWorkoutLogFromHistory(getOrCreateLog(date, data.workoutLogs, settings, performedDayKey), data.workoutLogs);
     if (!data.settings.startDate) persistSettings(settings);
-    if (!data.workoutLogs.some((item) => item.id === log.id)) persistWorkout(log);
+    if (!existing || log !== existing) persistWorkout(log);
     navigate("logger", log.id);
   };
 

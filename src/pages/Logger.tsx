@@ -22,7 +22,9 @@ import {
   targetRIRForSet,
   trackingTypeForExercise,
   findExercise,
+  upgradeCurrentDraft,
 } from "../lib/progress";
+import { muscleLabels } from "../lib/muscles";
 import { buildExerciseHelp } from "../lib/coach";
 import { buildNextWorkoutBriefing } from "../lib/readiness";
 import { parseRestSeconds } from "../components/RestTimer";
@@ -209,6 +211,8 @@ function ExerciseCard({ ctx, log, exerciseLog, index, onChange, readOnly, onOpti
           <h3>{name}</h3>
           <p>{exerciseLog.sets.length} × {exercise.reps ?? exercise.seconds}{effort ? ` · ${effort}` : ""} · rest {exercise.rest.replace(/ after .*/, "")}</p>
           {showLoad && <p>{loadLabelForExercise(exercise)}</p>}
+          <p className="ex-card__muscles">{(exercise.muscleGroups ?? []).map((group) => muscleLabels[group]).join(" · ") || exercise.target}</p>
+          {(log.planVersion ?? 1) >= 4 && exerciseLog.exerciseId.startsWith("cn3-") && <p>Earlier-plan work already recorded. Kept for this workout; future sessions use the updated movement.</p>}
         </div>
         <button type="button" className="icon-btn" onClick={onOptions} aria-label={`Options and help for ${name}`}><Info size={18} /></button>
       </div>
@@ -360,6 +364,12 @@ export function LoggerPage({ ctx, logId, restDock }: { ctx: AppContext; logId?: 
   const [shortOpen, setShortOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!log) return;
+    const updated = upgradeCurrentDraft(log);
+    if (updated !== log) ctx.saveWorkout(updated);
+  }, [log?.id, log?.planVersion]);
 
   useEffect(() => {
     const cards = Array.from(document.querySelectorAll<HTMLElement>(".ex-card[id^='ex-']"));

@@ -10,7 +10,7 @@ import {
   WorkoutLog,
 } from "../types";
 import { getWorkoutByKey, trainingDayKeys, workoutDays } from "../data/routine";
-import { CORNELL_ID, CORNELL_PLAN_VERSION, CORNELL_START, cornellActive, cornellDays, cornellExercises, daysForDate, exercisesForDate, isCalibrationWeek, isTrainingLog, prescriptionWeekForDate, prescriptionWeekForLog, trainingDaysForDate } from "../data/cornell";
+import { CABLE_FREE_START, CORNELL_ID, CORNELL_PLAN_VERSION, CORNELL_START, cornellActive, cornellDays, cornellExercises, cornellV4SourceIds, daysForDate, exercisesForDate, isCalibrationWeek, isTrainingLog, prescriptionWeekForDate, prescriptionWeekForLog, trainingDaysForDate } from "../data/cornell";
 import { addDays, dayKeyForDate, daysSince, getCycleInfo, getProgramWeek, todayISO } from "./date";
 
 export const allExercises = [...Object.values(workoutDays).flatMap((day) => day.exercises), ...cornellExercises];
@@ -292,6 +292,31 @@ export function createWorkoutLog(date: string, settings: ProgramSettings, perfor
   };
 }
 
+/** Apply the requested revision only to a current draft when it is opened.
+ * Completed/older logs are never changed; recorded cable work remains honest.
+ */
+export function upgradeCurrentDraft(log: WorkoutLog): WorkoutLog {
+  if (log.status !== "draft" || log.programId !== CORNELL_ID || log.date < CABLE_FREE_START || (log.planVersion ?? 1) >= 4 || log.planVersion !== 3) return log;
+  const used = new Set<string>();
+  const planned = exercisesForDate(cornellDays[log.dayKey], log.date);
+  const exerciseLogs = planned.map((exercise): ExerciseLog => {
+    const old = log.exerciseLogs.find((entry) => entry.exerciseId === cornellV4SourceIds[exercise.id]);
+    if (!old) return { id: createId("exercise"), exerciseId: exercise.id, completed: false, sets: createSetLogs(exercise) };
+    used.add(old.id);
+    const oldExercise = findExercise(old.exerciseId);
+    const sameMovement = exerciseComparisonMatches(oldExercise, exercise);
+    const recorded = old.sets.some((set) => set.completed || set.completionOverride ||
+      [set.weight, set.reps, set.leftReps, set.rightReps, set.seconds, set.rir, set.notes].some((value) => String(value ?? "").trim())) ||
+      !!old.performedExerciseName || !!old.notes || !!old.flags?.length;
+    if (!sameMovement && recorded) return old;
+    if (!sameMovement) return { ...old, exerciseId: exercise.id, completed: false, sets: createSetLogs(exercise) };
+    const extra = createSetLogs(exercise).slice(old.sets.length);
+    const sets = [...old.sets, ...extra];
+    return { ...old, exerciseId: exercise.id, sets, completed: !old.skipped && sets.every((set) => set.completed) };
+  });
+  return { ...log, planVersion: 4, exerciseLogs: [...exerciseLogs, ...log.exerciseLogs.filter((entry) => !used.has(entry.id))] };
+}
+
 export function getOrCreateLog(date: string, logs: WorkoutLog[], settings: ProgramSettings, performedDayKey?: DayKey): WorkoutLog {
   if (performedDayKey) {
     return logs.find((log) => log.date === date && log.dayKey === performedDayKey) ?? createWorkoutLog(date, settings, performedDayKey);
@@ -521,7 +546,7 @@ export function cycleWorkoutTarget(): number {
 
 export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]): WorkoutLog {
   // Calibration weeks (and every v1 Cornell log) stay deliberately blank.
-  if (log.programId === CORNELL_ID && ((log.planVersion ?? 1) < 2 || isCalibrationWeek(log.date, log.programStartDate))) return log;
+  if (log.programId === CORNELL_ID && ((log.planVersion ?? 1) < 2 || isCalibrationWeek(log.date, log.programStartDate, log.planVersion))) return log;
   return {
     ...log,
     exerciseLogs: log.exerciseLogs.map((exerciseLog) => {
@@ -529,6 +554,7 @@ export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]
       if (!exercise) return exerciseLog;
       const previous = previousExercisePerformance(logs, log.date, exercise);
       if (!previous) return exerciseLog;
+      if (daysSince(previous.workout.date, log.date) > 28) return exerciseLog;
       if (!shouldShowLoadInput(exercise)) return exerciseLog;
       return {
         ...exerciseLog,

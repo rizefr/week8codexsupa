@@ -4,7 +4,7 @@ import { calculateMuscleVolume, plannedMuscleVolume } from '../dist/src/lib/musc
 import { cornellDaysV1, cornellDaysV2, cornellDays, workoutForLog } from '../dist/src/data/cornell.js';
 const settings = {startDate:'2026-05-25'};
 const log = createWorkoutLog('2026-10-30', settings);
-assert.equal(log.planVersion, 3);
+assert.equal(log.planVersion, 4);
 assert.equal(workoutForLog({...log,planVersion:1}),cornellDaysV1.friday);
 assert.equal(workoutForLog({...log,planVersion:2}),cornellDaysV2.friday);
 const snapshot = JSON.stringify(log);
@@ -19,7 +19,7 @@ assert.equal(volume.get('upper-chest'),6);
 assert.equal(volume.get('side-delts'),9);
 assert.equal(volume.get('quads'),5);
 assert.equal(volume.get('hamstrings'),5);
-assert.equal(Object.values(cornellDays).filter(d=>d.key !== 'sunday' && d.exercises.some(e=>e.id.startsWith('cn3'))).length,4);
+assert.equal(Object.values(cornellDays).filter(d=>d.key !== 'sunday' && d.exercises.some(e=>e.id.startsWith('cn4'))).length,4);
 for(const d of Object.values(cornellDays)) for(const e of d.exercises) {
   assert.ok(findExercise(e.id));
   assert.equal(findExercise(e.id).sets,e.sets,'Exercise registry must preserve each version-specific prescription');

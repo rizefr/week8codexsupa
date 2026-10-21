@@ -2550,6 +2550,13 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+.ex-card__name .ex-card__muscles {
+  color: var(--accent-light, #a6b5ff);
+  margin-top: 5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .heat {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));

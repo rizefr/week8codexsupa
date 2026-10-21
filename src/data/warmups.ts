@@ -1,10 +1,10 @@
 import { DayKey, WarmupDrill, WarmupLog, WorkoutLog } from "../types";
 import { isTrainingDay } from "../lib/progress";
-import { CORNELL_ID, cornellDaysForLog } from "./cornell";
+import { CORNELL_ID, CORNELL_PLAN_VERSION, cornellDaysForLog } from "./cornell";
 
 const easyEffort = "Easy RPE 2-4; prime joints and positions without fatigue.";
 
-function cornellWarmups(dayKey: DayKey, planVersion = 3): WarmupDrill[] {
+function cornellWarmups(dayKey: DayKey, planVersion = CORNELL_PLAN_VERSION): WarmupDrill[] {
   const workout = cornellDaysForLog({ planVersion })[dayKey];
   if (!workout.exercises.length) return [];
   const lower = workout.exercises[0]?.muscleGroups?.some((group) => ["quads", "hamstrings"].includes(group));
@@ -98,12 +98,12 @@ export const doNotDoBeforeLifting = [
   "Weighted lateral raise warm-up sets",
 ];
 
-export function warmupsForDay(dayKey: DayKey, type?: WarmupDrill["type"], programId?: string, planVersion = 3): WarmupDrill[] {
+export function warmupsForDay(dayKey: DayKey, type?: WarmupDrill["type"], programId?: string, planVersion = CORNELL_PLAN_VERSION): WarmupDrill[] {
   const drills = programId === CORNELL_ID ? cornellWarmups(dayKey, planVersion) : warmupDrillsByDay[dayKey] ?? [];
   return (type ? drills.filter((drill) => drill.type === type) : drills).sort((a, b) => a.order - b.order);
 }
 
-export function preExerciseWarmupsForExercise(dayKey: DayKey, exerciseId: string, programId?: string, planVersion = 3): WarmupDrill[] {
+export function preExerciseWarmupsForExercise(dayKey: DayKey, exerciseId: string, programId?: string, planVersion = CORNELL_PLAN_VERSION): WarmupDrill[] {
   return warmupsForDay(dayKey, "pre-exercise", programId, planVersion).filter((drill) => drill.exerciseId === exerciseId);
 }
 

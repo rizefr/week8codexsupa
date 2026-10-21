@@ -146,7 +146,7 @@ export function SettingsPage({ ctx, onRepairGamification, onImport, onLoadDevSam
           <button type="button" className="btn btn--secondary btn--sm" onClick={() => { onRepairGamification(); setBackups(getLocalBackups()); setMessage("Badges re-checked against your logs."); }}>Re-check badges</button>
           {isLocalDev && <button type="button" className="btn btn--secondary btn--sm" onClick={onLoadDevSample}>Load sample data (local only)</button>}
         </div>
-        <p className="faint small" style={{ marginTop: 10 }}>Cornell upper-priority plan v3 · older logs retain their original plan. History is never rewritten.</p>
+        <p className="faint small" style={{ marginTop: 10 }}>Cornell cable-free plan v4 · full prescribed sets. Older completed logs retain their original plan.</p>
       </Card>
     </div>
   );

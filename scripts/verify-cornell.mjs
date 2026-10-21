@@ -19,7 +19,7 @@ const first = createWorkoutLog(CORNELL_START, settings);
 assert.equal(first.programId, CORNELL_ID);
 assert.equal(weekForLog(first), 1);
 assert.equal(isTrainingLog(first), true);
-assert.ok(first.exerciseLogs.every((entry) => entry.sets.length <= 2));
+assert.equal(first.exerciseLogs[0].sets.length, 3, 'Current plan starts with full prescribed sets');
 assert.equal(cornellWeek('2026-10-23'), 2);
 assert.equal(cornellWeek('2026-12-04'), 8);
 assert.equal(cornellWeek('2026-12-11'), 1);
@@ -113,7 +113,7 @@ assert.equal(previousExercisePerformance([legacy], '2026-10-20', findExercise('s
 assert.notEqual(before, preserved, 'Test fixture deliberately has completed values');
 
 // ---- v2 program rules -------------------------------------------------------
-assert.equal(first.planVersion, 3, 'New Cornell logs carry the finalized plan version');
+assert.equal(first.planVersion, 4, 'New Cornell logs carry the cable-free plan version');
 const v1Tuesday = { ...createWorkoutLog('2026-10-20', settings), planVersion: undefined };
 assert.equal(workoutForLog(v1Tuesday), cornellDaysV1.tuesday, 'Logs without planVersion keep the v1 definitions');
 assert.equal(workoutForLog(createWorkoutLog('2026-10-20', settings)).exercises.length, 6);
@@ -122,7 +122,8 @@ for (const id of ['cn-rdl', 'cn-leg-press-b', 'cn-pulldown', 'cn-incline-press']
 // Calibration happens only in cycle 1; cycle 2 week 1 uses the week-2 ramp.
 assert.equal(cornellWeek('2026-12-11'), 1);
 assert.equal(prescriptionWeekForDate('2026-12-11'), 2);
-assert.equal(prescriptionWeekForDate('2026-10-16'), 1);
+assert.equal(prescriptionWeekForDate('2026-10-16', 3), 1, 'Historical v3 keeps its calibration prescription');
+assert.equal(prescriptionWeekForDate('2026-10-16'), 2, 'Current plan has no calibration cap');
 assert.ok(exercisesForDate(cornellDays.friday, '2026-12-11').every((exercise, index) => exercise.sets === cornellDays.friday.exercises[index].sets));
 assert.equal(targetRIRForExercise(findExercise('cn-lateral-a'), 4), '1-2; 0-1', 'Isolation last set may reach 0-1 RIR in growth weeks');
 
@@ -145,7 +146,7 @@ const fridayAt = (date, weight, reps, rir) => {
 const calib = fridayAt('2026-10-16', '100', '10', '3');
 const week2 = fridayAt('2026-10-23', '100', '10', '3');
 const lowerRir = fridayAt('2026-10-30', '100', '12', '1');
-assert.ok(week2.exerciseLogs[0].sets.length > calib.exerciseLogs[0].sets.length, 'Week 2 has more sets than calibration');
+assert.equal(week2.exerciseLogs[0].sets.length, calib.exerciseLogs[0].sets.length, 'Full prescribed sets begin immediately');
 assert.equal(detectPRs({ settings, workoutLogs: [calib, week2, lowerRir], bodyWeights: [] }).length, 0, 'More sets or less RIR at the same load is not a PR');
 const heavier = fridayAt('2026-11-06', '105', '10', '2');
 const prsAfter = detectPRs({ settings, workoutLogs: [calib, week2, lowerRir, heavier], bodyWeights: [] });

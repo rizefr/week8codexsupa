@@ -28,9 +28,8 @@ import { statusTone } from "../ui/MuscleMap";
 
 export function phaseLabel(date: string): { label: string; detail: string; tone: "accent" | "gold" | "neutral" } {
   const week = cornellWeek(date);
-  if (isCalibrationWeek(date)) return { label: "Calibration week", detail: "2 sets per exercise at ~3 RIR. Find honest starting loads.", tone: "neutral" };
   if (week === 8) return { label: "Deload week", detail: "Half the sets at 3-4 RIR. Recover, then start the next block.", tone: "neutral" };
-  if (week === 2 || (week === 1 && cornellCycle(date) > 1)) return { label: "Ramp-up week", detail: "Full sets at 2-3 RIR.", tone: "accent" };
+  if (week <= 2) return { label: "Full working sets", detail: "Normal prescribed sets at 2-3 RIR. Choose controlled loads for new movements.", tone: "accent" };
   return { label: "Build week", detail: "Full sets at 1-2 RIR. Isolation lifts can take the last set to 0-1 RIR.", tone: "gold" };
 }
 

@@ -337,21 +337,27 @@ The Routine page also lists movements to avoid before lifting: long static stret
 If production renders as unstyled plain HTML, verify the deployed app shell before changing app data or Supabase settings. The likely cause is an incomplete `dist` upload, especially a missing `dist/src/styles.css` or vendor module files. Rebuild with `npx netlify build --context production`, confirm `dist/config.js` has non-empty Supabase values and `dist/src/styles.css` exists, then deploy with `npx netlify deploy --prod --dir=dist --no-build`.
 # Cornell cycle (2026-10-16)
 
-The current plan is a separate `cornell-v1` cycle for Helen Newman: Friday/Tuesday
-lower, Saturday/Wednesday upper, Sunday optional easy aerobic, Monday/Thursday
-fixed ROTC. See `CORNELL_CYCLE_RESEARCH.md` for prescriptions, equipment evidence,
-research, the critical review, recovery tradeoffs, and progression assumptions.
+The current plan is version 4 of the separate `cornell-v1` cycle for Helen Newman:
+Tuesday/Wednesday/Saturday upper, Friday lower, Sunday optional easy aerobic or
+light lifting, Monday/Thursday fixed ROTC. It avoids external cable stations and
+uses full prescribed sets immediately (15/14/15/15 essential sets per week).
+See `CABLE_FREE_REVIEW.md` for substitutions, evidence, the two independent reviews,
+recovery tradeoffs, and safe draft revision behavior. Earlier research notes are
+historical context, not the active prescription.
 The original routine remains available in Routine and resolves all unversioned
 historical logs. Original start dates, storage keys, auth and schema are unchanged.
 
 New log metadata: optional `programId` and `programStartDate` inside the existing
-workout JSON. Week-one calibration and week-eight deload create fewer future
-working sets; they never trim saved sets. Exact unchanged exercises display their
-latest confirmed performance, including old loads/notes, but new-cycle fields are
-not prefilled. A newer completed comparable session becomes the next reference.
+workout JSON, plus `planVersion`. Old plan versions retain their week-one calibration;
+version 4 removes that cap and retains the week-eight deload. Saved sets are never
+trimmed. Current drafts gain missing prescribed rows when opened; already logged
+work stays intact. Exact unchanged exercises display their latest confirmed
+performance, including old loads/notes. Stale references over 28 days do not prefill
+new loads. A newer completed comparable session becomes the next reference.
 Different machines do not inherit old dumbbell/assistance PR baselines.
 
-Added verification: `node scripts/verify-cornell.mjs` after the build. Continue
+Added verification: `node scripts/verify-cornell.mjs`, `node scripts/verify-release.mjs`
+and `node scripts/verify-cable-free.mjs` after the build. Continue
 running `npm run typecheck`, `npm run build`, and `npm run test:progress`.
 For production use `npx netlify build --context production`, inspect non-empty
 correct-project `dist/config.js`, then `npx netlify deploy --prod --dir=dist --no-build`.

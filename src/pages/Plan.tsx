@@ -128,7 +128,7 @@ export function PlanPage({ ctx: _ctx }: { ctx: AppContext }) {
             <p className="eyebrow">Upper-priority split</p>
             <h2 className="today-card__title" style={{ marginTop: 4 }}>3 upper + 1 lower. Built for your priorities.</h2>
             <p className="muted" style={{ marginTop: 8, fontSize: 14 }}>
-              Upper chest twice, delts and arms three times, back twice. One focused lower day leaves more recovery for ROTC. 59 working sets per normal week, about 60–75 min per session.
+              Upper chest twice, delts and arms three times, back twice. No cable-station setup. Full prescribed sets from your first session: 59 working sets per normal week, about 60–75 min per session.
             </p>
             <div className="split-diagram" style={{ marginTop: 16 }} aria-label="Weekly split">
               {order.map((item) => (
@@ -152,6 +152,13 @@ export function PlanPage({ ctx: _ctx }: { ctx: AppContext }) {
               {(cornellDays.friday.rules ?? []).map((rule) => <li key={rule}>{rule}</li>)}
             </ul>
           </Card>
+
+          <Disclosure summary="Cable-free exercise choices">
+            <p>Assisted pull-ups replace pulldowns, chest-supported DB rows replace seated cable rows, and two-hand DB overhead extensions replace cable triceps work. Friday uses a DB-loaded floor crunch; Tuesday keeps bodyweight reverse crunches.</p>
+            <p>These keep the intended muscle targets and weekly sets. Exact growth equivalence between each pair has not been established. New exercises start their own load baseline; cable-stack weights do not transfer.</p>
+            <p>Dedicated pin-selected machines stay. They do not require setting up cable attachments. Equipment checked against <a href="https://scl.cornell.edu/recreation/facility/helen-newman-fitness-center" target="_blank" rel="noreferrer">Cornell's equipment list</a>.</p>
+            <p>The <a href="https://pubmed.ncbi.nlm.nih.gov/35819335/" target="_blank" rel="noreferrer">overhead-extension study</a> supports keeping an overhead triceps slot, but tested cables rather than dumbbells. A <a href="https://pubmed.ncbi.nlm.nih.gov/37582807/" target="_blank" rel="noreferrer">machine/free-weight review</a> found no overall hypertrophy difference; it does not prove every exercise pair equal.</p>
+          </Disclosure>
 
           <label className="search">
             <Search size={17} />

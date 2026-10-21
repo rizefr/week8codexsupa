@@ -84,7 +84,8 @@ export const cornellDaysV1: Record<DayKey, WorkoutDay> = {
 // New logs carry planVersion 2. Logs without it keep resolving to v1 above, so
 // history, PRs, and XP for earlier sessions never change retroactively.
 // ---------------------------------------------------------------------------
-export const CORNELL_PLAN_VERSION = 3;
+export const CORNELL_PLAN_VERSION = 4;
+export const CABLE_FREE_START = "2026-10-21";
 const isolationRIR = { setup: "3", growth: "1-2; 0-1", push: "1-2; 0-1" };
 const compoundRIR = { setup: "3", growth: "1-2", push: "1-2" };
 const steadyRIR = { setup: "3", growth: "2", push: "2" };
@@ -224,7 +225,46 @@ export const cornellDaysV3: Record<DayKey, WorkoutDay> = {
     exercises: sundayV2.exercises.map((exercise) => ({ ...exercise, id: exercise.id.replace("cn2-", "cn3-"), sets: Math.min(2, exercise.sets ?? 2) })) },
 };
 cornellDaysV3.tuesday.exercises[0].targetRIRByPhase = steadyRIR;
-export const cornellDays = cornellDaysV3;
+// v4 keeps every earlier prescription readable and removes external cable stations.
+export const cornellV4SourceIds: Record<string, string> = {};
+function cableFreeExercise(source: Exercise): Exercise {
+  let base = source;
+  if (source.name === "Overhead Cable Triceps Extension") {
+    base = { ...legacy.find((exercise) => exercise.id === "wednesday-standing-db-overhead-triceps-extension")!,
+      name: "Seated Two-Hand DB Overhead Triceps Extension", comparisonExerciseId: "seated-two-hand-db-overhead-triceps",
+      canonicalExerciseId: "seated-two-hand-db-overhead-triceps", aliases: [], comparisonAliases: [],
+      loadLabel: "Weight (lb, one DB total)", muscleGroups: ["triceps"],
+      targetRIRByPhase: { setup: "2-3", growth: "1-2", push: "1-2" },
+      notes: "Hold one DB securely with both hands. Use a stable seated position, ribs down, and a comfortable overhead stretch. Stop if elbows or shoulders hurt; do not force depth.",
+      logHint: "Enter the total weight of the single DB. This is a new baseline, not comparable to cable-stack load." };
+  } else if (source.name === "Helen Newman Lat Pulldown") {
+    base = { ...cornellDaysV3.saturday.exercises[1], reps: "8-12",
+      notes: "Use the chin/dip-assist machine with a repeatable comfortable grip. Enough assistance for controlled full reps; reduce assistance only after reps are stable. No cable-station setup." };
+  } else if (source.name === "Helen Newman Seated Row") {
+    base = { ...cornellDaysV3.saturday.exercises[2],
+      notes: "Chest stays on the incline bench. Reach under control, then pull elbows back/down without shrugging or torso movement. Same setup as Saturday; record bench angle." };
+  } else if (source.name === "Kneeling Cable Crunch") {
+    base = { id: "weighted-floor-crunch", name: "DB-Loaded Floor Crunch", kind: "strength", trackingType: "weighted-reps",
+      comparisonExerciseId: "db-loaded-floor-crunch", sets: 2, reps: "10-20", rest: "90 sec", target: "Abs/core",
+      muscleGroups: ["abs-core"], loadLabel: "Weight (lb, one DB total)", loadRequired: true,
+      rirRequired: false, effortMode: "control", effortCue: "Stop when controlled trunk flexion breaks.", prEligible: true,
+      riskLevel: "low", primaryProgression: "add-reps-first", targetRIRByPhase: coreCue,
+      notes: "Hold one light DB securely against the chest. Curl ribs toward pelvis; keep neck relaxed and avoid a full sit-up. Add clean reps before load. Skip if even a light DB cannot be positioned comfortably; do not force a painful setup.",
+      logHint: "Enter the single DB's total weight; establish a fresh baseline. Cable-stack pounds do not transfer." };
+  }
+  const id = source.id.replace(/^cn3-/, "cn4-");
+  cornellV4SourceIds[id] = source.id;
+  return { ...base, id, sets: source.sets, rest: source.rest,
+    superset: source.superset, supersetGroup: source.supersetGroup?.replace("cn3-", "cn4-"), supersetLabel: source.supersetLabel };
+}
+export const cornellDaysV4 = Object.fromEntries(Object.entries(cornellDaysV3).map(([key, workout]) => [key, {
+  ...workout, exercises: workout.exercises.map(cableFreeExercise),
+  rules: workout.exercises.length ? ["Full prescribed working sets from the first session; no two-set calibration cap.",
+    "Use 2-3 RIR initially, then 1-2 RIR in build weeks. New movements need honest starting loads, not cable-weight conversions.",
+    "Week 8 remains a deload: halve sets, rounded up, at 3-4 RIR.",
+    "Add reps within the range first. Increase load or reduce assistance only after two comparable sessions at target effort."] : workout.rules,
+}])) as Record<DayKey, WorkoutDay>;
+export const cornellDays = cornellDaysV4;
 export const OPTIONAL_DAY: DayKey = "sunday";
 export const ROTC_DAYS: DayKey[] = ["monday", "thursday"];
 
@@ -234,11 +274,12 @@ export const cornellExercises = uniqueById([
   ...Object.values(cornellDaysV1).flatMap((workout) => workout.exercises),
   ...Object.values(cornellDaysV2).flatMap((workout) => workout.exercises),
   ...Object.values(cornellDaysV3).flatMap((workout) => workout.exercises),
+  ...Object.values(cornellDaysV4).flatMap((workout) => workout.exercises),
 ]);
 export function cornellActive(date = todayISO()): boolean { return date >= CORNELL_START; }
 export function daysForDate(date = todayISO()) { return cornellActive(date) ? cornellDays : legacyDays; }
 export function cornellDaysForLog(log: Pick<WorkoutLog, "planVersion">): Record<DayKey, WorkoutDay> {
-  return (log.planVersion ?? 1) >= 3 ? cornellDaysV3 : (log.planVersion ?? 1) === 2 ? cornellDaysV2 : cornellDaysV1;
+  return (log.planVersion ?? 1) >= 4 ? cornellDaysV4 : (log.planVersion ?? 1) === 3 ? cornellDaysV3 : (log.planVersion ?? 1) === 2 ? cornellDaysV2 : cornellDaysV1;
 }
 export function workoutForLog(log: Pick<WorkoutLog, "dayKey" | "programId"> & { planVersion?: number }): WorkoutDay {
   return (log.programId === CORNELL_ID ? cornellDaysForLog(log) : legacyDays)[log.dayKey];
@@ -262,8 +303,8 @@ export function cornellWeekRange(date: string, start = CORNELL_START): { from: s
   const offset = Math.floor(cornellDayIndex(date, start) / 7) * 7;
   return { from: addDays(start, offset), to: addDays(start, offset + 6) };
 }
-export function isCalibrationWeek(date: string, start = CORNELL_START): boolean {
-  return cornellCycle(date, start) === 1 && cornellWeek(date, start) === 1;
+export function isCalibrationWeek(date: string, start = CORNELL_START, planVersion = CORNELL_PLAN_VERSION): boolean {
+  return planVersion < 4 && cornellCycle(date, start) === 1 && cornellWeek(date, start) === 1;
 }
 export function weekForLog(log: WorkoutLog): number { return log.programId === CORNELL_ID ? cornellWeek(log.date, log.programStartDate) : log.weekInCycle ?? 1; }
 /**
@@ -272,7 +313,8 @@ export function weekForLog(log: WorkoutLog): number { return log.programId === C
  */
 export function prescriptionWeekForDate(date: string, planVersion = CORNELL_PLAN_VERSION, start = CORNELL_START): number {
   const week = cornellWeek(date, start);
-  if (planVersion >= 2 && week === 1 && !isCalibrationWeek(date, start)) return 2;
+  if (planVersion >= 4 && week === 1) return 2;
+  if (planVersion >= 2 && week === 1 && !isCalibrationWeek(date, start, planVersion)) return 2;
   return week;
 }
 export function prescriptionWeekForLog(log: WorkoutLog): number {
