@@ -351,13 +351,18 @@ New log metadata: optional `programId` and `programStartDate` inside the existin
 workout JSON, plus `planVersion`. Old plan versions retain their week-one calibration;
 version 4 removes that cap and retains the week-eight deload. Saved sets are never
 trimmed. Current drafts gain missing prescribed rows when opened; already logged
-work stays intact. Exact unchanged exercises display their latest confirmed
-performance, including old loads/notes. Stale references over 28 days do not prefill
-new loads. A newer completed comparable session becomes the next reference.
+work stays intact. Exact unchanged exercises display their latest recorded
+performance across all training days, including old loads/notes and valid sets in
+unfinished workouts. Empty rows, invalid performance and explicitly incomplete or
+skipped sets do not replace a reference. The reference block labels unfinished
+workouts. Stale references over 28 days do not prefill new loads. PR and coaching
+progression comparisons retain completed-workout eligibility; viewing a draft as
+a reference never awards completion or XP.
 Different machines do not inherit old dumbbell/assistance PR baselines.
 
 Added verification: `node scripts/verify-cornell.mjs`, `node scripts/verify-release.mjs`
-and `node scripts/verify-cable-free.mjs` after the build. Continue
+and `node scripts/verify-cable-free.mjs` after the build. Also run
+`node scripts/verify-latest-performance.mjs` for cross-day unfinished-workout references. Continue
 running `npm run typecheck`, `npm run build`, and `npm run test:progress`.
 For production use `npx netlify build --context production`, inspect non-empty
 correct-project `dist/config.js`, then `npx netlify deploy --prod --dir=dist --no-build`.

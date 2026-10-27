@@ -560,7 +560,7 @@ export function prefillWorkoutLogFromHistory(log: WorkoutLog, logs: WorkoutLog[]
         ...exerciseLog,
         sets: exerciseLog.sets.map((set, index) => ({
           ...set,
-          weight: previous.exerciseLog.sets[index]?.weight ?? set.weight,
+          weight: previous.exerciseLog.sets.find((prior) => prior.setNumber === set.setNumber)?.weight ?? set.weight,
         })),
       };
     }),
@@ -673,26 +673,41 @@ export function progressionAdvice(log: ExerciseLog): string {
   return trackingType === "assistance-reps" ? "Keep assistance the same and add clean reps next time." : "Keep the same load/variation and add clean reps next time.";
 }
 
+function recordedReferenceSets(log: ExerciseLog, exercise?: Exercise): SetLog[] {
+  if (log.skipped || !exercise) return [];
+  return log.sets.filter((set) => set.completionOverride !== "incomplete" &&
+    setHasRecordedPerformance(set, exercise) && (!loadRequiredForExercise(exercise) || validLoadValue(set.weight) > 0));
+}
+
 export function exerciseSessions(
   logs: WorkoutLog[],
   exerciseQuery: Exercise | string,
-  options: { matchMode?: "strict" | "family" } = {},
+  options: { matchMode?: "strict" | "family"; includeDrafts?: boolean } = {},
 ) {
   const matches = options.matchMode === "family" ? exerciseMatches : exerciseComparisonMatches;
   return logs
-    .filter((log) => log.status === "completed")
+    .filter((log) => log.status === "completed" || (options.includeDrafts && log.status === "draft"))
     .flatMap((log) =>
       log.exerciseLogs
         .map((exerciseLog) => ({ workout: log, exerciseLog, exercise: findExercise(exerciseLog.exerciseId) }))
-        .filter((item) => matches(item.exercise, exerciseQuery) && exerciseLogHasComparablePerformance(item.exerciseLog, item.exercise)),
+        .filter((item) => matches(item.exercise, exerciseQuery) && (options.includeDrafts
+          ? recordedReferenceSets(item.exerciseLog, item.exercise).length > 0
+          : exerciseLogHasComparablePerformance(item.exerciseLog, item.exercise))),
     )
     .sort((a, b) => a.workout.date.localeCompare(b.workout.date));
 }
 
-export function previousExercisePerformance(logs: WorkoutLog[], currentDate: string, exerciseQuery: Exercise | string) {
-  return exerciseSessions(logs, exerciseQuery)
+export function previousExercisePerformance(logs: WorkoutLog[], currentDate: string, exerciseQuery: Exercise | string, options: { includeDrafts?: boolean } = {}) {
+  const includeDrafts = options.includeDrafts ?? true;
+  const latest = exerciseSessions(logs, exerciseQuery, { includeDrafts })
     .filter((item) => item.workout.date < currentDate)
     .at(-1);
+  if (!latest || !includeDrafts) return latest;
+  // A saved set is useful as a reference even if Finish Workout was never tapped.
+  // Return only recorded sets, without changing the saved workout or PR baseline.
+  return { ...latest, exerciseLog: { ...latest.exerciseLog,
+    sets: recordedReferenceSets(latest.exerciseLog, latest.exercise),
+  } };
 }
 
 export function previousSessionNotes(exerciseLog: ExerciseLog, workout?: WorkoutLog): string[] {

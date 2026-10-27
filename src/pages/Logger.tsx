@@ -49,7 +49,7 @@ function elapsedLabel(startedAt: string, now: number): string {
 }
 
 function compactPrevious(set: SetLog | undefined, exercise: Exercise): string {
-  if (!set || !set.completed) return "—";
+  if (!set || !setHasRecordedPerformance(set, exercise)) return "—";
   const tracking = trackingTypeForExercise(exercise);
   const reps = tracking === "timed" ? `${set.seconds}s` : exercise.unilateral ? `${set.leftReps || set.reps}/${set.rightReps || set.reps}` : set.reps;
   if (!shouldShowLoadInput(exercise)) return `${reps}`;
@@ -59,7 +59,7 @@ function compactPrevious(set: SetLog | undefined, exercise: Exercise): string {
 /** Values to suggest for an empty field: this session's previous set, then last session's same set. */
 function suggestions(exerciseLog: ExerciseLog, index: number, previous: ExerciseLog | undefined) {
   const above = exerciseLog.sets.slice(0, index).reverse().find((set) => set.completed) ?? exerciseLog.sets.slice(0, index).reverse().find((set) => set.weight || set.reps);
-  const prior = previous?.sets[index] ?? previous?.sets.at(-1);
+  const prior = previous?.sets.find((set) => set.setNumber === exerciseLog.sets[index]?.setNumber) ?? previous?.sets.at(-1);
   // Last session's matching set wins; otherwise repeat the set just done.
   return {
     weight: above?.weight || prior?.weight || "",
@@ -128,7 +128,7 @@ function SetRow({ set, index, exercise, exerciseLog, previous, week, readOnly, o
   return (
     <div ref={rowRef} className={cx("set-row", set.completed && "is-done", `cols-${(showLoad ? 1 : 0) + (exercise.unilateral ? 2 : 1) + (showRir ? 1 : 0)}`)}>
       <span className="set-row__num">{set.setNumber}</span>
-      <span className="set-row__prev" title="Last session">{compactPrevious(previous?.sets[index], exercise)}<small>{set.target}{showRir ? ` · ${rirTarget.replace(/ /g, "")}` : ""}</small></span>
+      <span className="set-row__prev" title="Last recorded session">{compactPrevious(previous?.sets.find((prior) => prior.setNumber === set.setNumber), exercise)}<small>{set.target}{showRir ? ` · ${rirTarget.replace(/ /g, "")}` : ""}</small></span>
       {showLoad && input("weight", hint.weight || (loadIsAssistance(exercise) ? "assist" : "lb"), "decimal", loadIsAssistance(exercise) ? "assistance pounds" : "weight")}
       {tracking === "timed"
         ? input("seconds", hint.seconds || "sec", "numeric", "seconds")
@@ -235,7 +235,8 @@ function ExerciseCard({ ctx, log, exerciseLog, index, onChange, readOnly, onOpti
             <strong>Previous session</strong>
             <time dateTime={previous.workout.date}>{formatDate(previous.workout.date, { month: "short", day: "numeric", year: "numeric" })}</time>
           </div>
-          <p>{previousSetSummary({ ...previous.exerciseLog, sets: previous.exerciseLog.sets.filter((set) => set.completed && setHasRecordedPerformance(set, previous.exercise!)) }, previous.exercise)}</p>
+          {previous.workout.status === "draft" && <span>Recorded sets · workout unfinished</span>}
+          <p>{previousSetSummary(previous.exerciseLog, previous.exercise)}</p>
           {showLoad && <span>{loadLabelForExercise(previous.exercise)} · Reference only; follow today's effort target.</span>}
         </section>
       )}
